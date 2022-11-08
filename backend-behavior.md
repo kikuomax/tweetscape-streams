@@ -54,7 +54,7 @@ Shows a new stream button.
 
 - Checks if the stream exists ([`getStreamByName`](#getstreambyname)).
 - Obtains the user info from Twitter.
-- Creates the user if necessary.
+- Creates the user if necessary ([`createUserNeo4j`](#createuserneo4j)).
 - Creates a Twitter list.
 - Creates a new stream ([`createStream`](#createstream)).
 - Redirects to [`/streams/$streamName`](#routesstreamsstreamname).
@@ -66,8 +66,9 @@ Shows a new stream button.
 - Obtains the stream ([`getStreamByName`](#getstreambyname)).
 - Obtains the user info from Twitter.
 - Obtains the Twitter list corresponding to the stream.
-    - Creates a Twitter list if the stream is legacy and recreates a new stream ([`createStream`](#createstream)).
-    - Recreates a Twitter list if it was deleted and recreates a new stream ([`createStrea`](#createstream)).
+    - If the stream is legacy, creates a Twitter list if the stream, recreates a new stream ([`createStream`](#createstream)), and re-adds seed users ([`addSeedUserToStream`](#addseedusertostream)).
+    - If a Twitter list no longer exists (deleted), recreates it and a new stream ([`createStrea`](#createstream)).
+      Re-adding seed users ([`addSeedUserToStream`](#addseedusertostream)) is suspended for now.
 - Indexes older tweets with [`indexMoreTweets`](#indexmoretweets) if `indexMoreTweets` query parameter is given
 - Indexes newer tweets with [`updateStreamTweets`](#updatestreamtweets)
 - Obtains the latest indexed 25 tweets in the stream ([`getStreamTweetsNeo4j`](#getstreamtweetsneo4j))
@@ -98,7 +99,11 @@ TBD
 
 ### createStream
 
-- Creates a new stream
+- Adds a new stream node in the neo4j database.
+
+### addSeedUserToStream
+
+TBD
 
 ### indexMoreTweets
 
@@ -160,6 +165,10 @@ TBD
 - Processes each chunk with a given write function.
 
 ## /models/user.server.ts
+
+### createUserNeo4j
+
+- Upserts the node of a given user in the neo4j database.
 
 ### indexUserOlderTweets
 
