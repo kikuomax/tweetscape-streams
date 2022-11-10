@@ -7,17 +7,19 @@
     - TBC: the `seeder` should offer seeder's rate limit for processing.
 3. `Indexer` creates a new `task` that processes the `accounts`.
 4. `Indexer` puts the `task` into the `task database`.
-5. `Indexer` pushes a request (`processing request`) for processing of the `task` to the `processing queue`.
-6. `Indexer` tells the `seeder` the ID (`task ID`) of the `task`.
-7. The `processing queue` picks the `processing request` for processing.
-8. The `processing queue` triggers a workflow (`account processing workflow`) to process the `task`.
-9. The `account processing workflow` fetches the information on the `task` from the `task database`.
-10. The `account processing workflow` marks the `task` "processing" in the `task database`.
-11. The `account processing workflow` processes the `accounts` one by one.
+    - While marking the `task` "pending".
+5. `Indexer` marks the `task` "queued" in the `task database`.
+6. `Indexer` pushes a request (`processing request`) for processing of the `task` to the `processing queue`.
+7. `Indexer` tells the `seeder` the ID (`task ID`) of the `task`.
+8. The `processing queue` picks the `processing request` for processing.
+9. The `processing queue` marks the `task` "processing" in the `task database`.
+10. The `processing queue` triggers a workflow (`account processing workflow`) to process the `task`.
+11. The `account processing workflow` fetches the information on the `task` from the `task database`.
+12. The `account processing workflow` processes the `accounts` one by one.
     - [Subscenario: Processing a single account](#subscenario-processing-a-single-account)
-12. The `account processing workflow` marks the `task` "done" in the `task database`.
-13. The `seeder` asks `Indexer` for the status of the `task` associated with the `task ID`.
-14. `Indexer` tells the `seeder` the `task` has done.
+13. The `account processing workflow` marks the `task` "done" in the `task database`.
+14. The `seeder` asks `Indexer` for the status of the `task` associated with the `task ID`.
+15. `Indexer` tells the `seeder` the `task` has done.
 
 ### Subscenario: Processing a single account
 
