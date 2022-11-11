@@ -6,3 +6,7 @@ node_modules
 # CDK asset staging directory
 .cdk.staging
 cdk.out
+
+# user specific configs
+/configs/neo4j.ts
+/configs/postgres.ts
