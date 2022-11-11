@@ -20,16 +20,16 @@ export const DEPLOYMENT_STAGE_CONTEXT = 'tweetscape:stage';
  * @beta
  */
 export function getDeploymentStage(node: Node): DeploymentStage {
-  const stage = node.tryGetContext(DEPLOYMENT_STAGE_CONTEXT);
-  if (stage == null) {
-    throw new RangeError(
-      `context "${DEPLOYMENT_STAGE_CONTEXT}" must be specified`,
-    );
-  }
-  if (!isDeploymentStage(stage)) {
-    throw new RangeError(`invalid deployment stage: ${stage}`);
-  }
-  return stage;
+    const stage = node.tryGetContext(DEPLOYMENT_STAGE_CONTEXT);
+    if (stage == null) {
+        throw new RangeError(
+            `context "${DEPLOYMENT_STAGE_CONTEXT}" must be specified`,
+        );
+    }
+    if (!isDeploymentStage(stage)) {
+        throw new RangeError(`invalid deployment stage: ${stage}`);
+    }
+    return stage;
 }
 
 /**
@@ -44,12 +44,12 @@ export function getDeploymentStage(node: Node): DeploymentStage {
  *   Whether `stageStr` is a deployment stage.
  */
 export function isDeploymentStage(
-  stageStr: string,
+    stageStr: string,
 ): stageStr is DeploymentStage {
-  for (const stage of DEPLOYMENT_STAGES) {
-    if (stage === stageStr) {
-      return true;
+    for (const stage of DEPLOYMENT_STAGES) {
+        if (stage === stageStr) {
+            return true;
+        }
     }
-  }
-  return false;
+    return false;
 }
