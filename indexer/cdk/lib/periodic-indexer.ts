@@ -1,7 +1,10 @@
 import * as path from 'path';
 import { Duration, aws_lambda as lambda } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
+import {
+    PythonFunction,
+    PythonLayerVersion,
+} from '@aws-cdk/aws-lambda-python-alpha';
 
 import type { ExternalResources } from './external-resources';
 
@@ -16,6 +19,24 @@ export class PeriodicIndexer extends Construct {
         super(scope, id);
 
         const { databaseCredentials } = props.externalResources;
+
+        // dependencies of Indexer
+        const dependenciesLayer = new PythonLayerVersion(
+            this,
+            'DependenciesLayer',
+            {
+                description: 'Layer of Indexer dependencies',
+                entry: path.join('lambda', 'indexer-dependencies'),
+                compatibleRuntimes: [
+                    lambda.Runtime.PYTHON_3_8,
+                    lambda.Runtime.PYTHON_3_9,
+                ],
+                compatibleArchitectures: [
+                    lambda.Architecture.ARM_64,
+                    lambda.Architecture.X86_64,
+                ],
+            },
+        );
 
         // TODO: build psycopg2 from the source code
         // currently, the `psycopg2` folder contains binary I manually built.
@@ -41,7 +62,7 @@ export class PeriodicIndexer extends Construct {
                 architecture: lambda.Architecture.ARM_64,
                 index: 'index.py',
                 handler: 'lambda_handler',
-                layers: [psycopg2Layer],
+                layers: [dependenciesLayer, psycopg2Layer],
                 environment: {
                     NEO4J_SECRET_ARN: databaseCredentials.secretArn,
                     POSTGRES_SECRET_ARN: databaseCredentials.secretArn,
