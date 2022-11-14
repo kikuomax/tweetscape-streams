@@ -7,6 +7,8 @@ You have to specify the following environment variables,
   connection parameters.
 * ``POSTGRES_SECRET_ARN``: ARN of the SecretsManager Secret containing
   PostgreSQL connection parameters.
+* ``TWITTER_SECRET_ARN``: ARN of the SecretsManager Secret containing Twitter
+  credentials.
 
 If you run this function locally, you need the following environment variables
 instead,
@@ -26,6 +28,8 @@ from typing import List, Tuple
 import boto3
 from neo4j import Driver, GraphDatabase, Transaction # type: ignore
 import psycopg2
+import requests
+from twarc import Twarc2 # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -64,18 +68,29 @@ class Token:
     access_token: str
     refresh_token: str
 
-    def __init__(self, user_id: str, access_token: str, refresh_token: str):
+    def __init__(
+        self,
+        user_id: str,
+        access_token: str,
+        refresh_token: str,
+        created_at,
+        updated_at,
+        expires_in,
+    ):
         """Initializes with token values.
         """
         self.user_id = user_id
         self.access_token = access_token
         self.refresh_token = refresh_token
+        self.created_at = created_at
+        self.updated_at = updated_at
+        self.expires_in = expires_in
 
     def __str__(self):
-        return f'Token(user_id={self.user_id}, access_token={self.access_token[:8]}..., refresh_token={self.refresh_token[:8]}...)'
+        return f'Token(user_id={self.user_id}, access_token={self.access_token[:8]}..., refresh_token={self.refresh_token[:8]}..., created_at={self.created_at}, updated_at={self.updated_at}, expires_in={self.expires_in})'
 
     def __repr__(self):
-        return f'Token(user_id={repr(self.user_id)}, access_token={repr(self.access_token[:8] + "...")}, refresh_token={repr(self.refresh_token[:8] + "...")})'
+        return f'Token(user_id={repr(self.user_id)}, access_token={repr(self.access_token[:8] + "...")}, refresh_token={repr(self.refresh_token[:8] + "...")}, created_at={repr(self.created_at)}, updated_at={repr(self.updated_at)}, expires_in={repr(self.expires_in)})'
 
 
 def read_all_streams(tx: Transaction) -> List[Stream]:
@@ -112,7 +127,10 @@ def get_user_token(postgres, username: str) -> Token:
             'SELECT'
             '  users.id,'
             '  tokens.access_token,'
-            '  tokens.refresh_token'
+            '  tokens.refresh_token,'
+            '  tokens.created_at,'
+            '  tokens.updated_at,'
+            '  tokens.expires_in'
             ' FROM users'
             ' INNER JOIN tokens'
             '  ON users.id = tokens.user_id'
@@ -122,7 +140,79 @@ def get_user_token(postgres, username: str) -> Token:
             },
         )
         record = curs.fetchone()
-        return Token(record[0], record[1], record[2])
+        return Token(
+            record[0],
+            record[1],
+            record[2],
+            record[3],
+            record[4],
+            record[5],
+        )
+
+
+def save_user_token(postgres, token: Token):
+    """Saves a given user token in the database.
+    """
+    with postgres.cursor() as curs:
+        curs.execute(
+            'UPDATE tokens'
+            ' SET'
+            '  access_token = %(access_token)s,'
+            '  refresh_token = %(refresh_token)s,'
+            '  expires_in = %(expires_in)s'
+            ' WHERE user_id = %(user_id)s',
+            {
+                'access_token': token.access_token,
+                'refresh_token': token.refresh_token,
+                'expires_in': token.expires_in,
+                'user_id': token.user_id,
+            },
+        )
+        postgres.commit() # TODO: is this necessary?
+
+
+def get_latest_tweets(twitter: Twarc2, user_id: str):
+    """Obtains the latest tweets of a given user.
+
+    :raises requests.exceptions.HTTPError: If there is an error to access the
+    Twitter API.
+    """
+    res = twitter.timeline(
+        user=user_id,
+        max_results=5,
+    )
+    for num, tweet in enumerate(res):
+        LOGGER.debug('tweet[%d]: %s', num, tweet)
+
+
+def try_refresh_token(
+    token: Token,
+    client_id: str,
+    client_secret: str,
+) -> Token:
+    """Tries to refresh the access token with a given refresh token.
+    """
+    client = requests.Session()
+    client.headers.update({'Content-Type': 'application/x-www-form-urlencoded'})
+    res = client.post(
+        'https://api.twitter.com/2/oauth2/token',
+        {
+            'refresh_token': token.refresh_token,
+            'grant_type': 'refresh_token',
+            'client_id': client_id,
+        },
+        auth=(client_id, client_secret),
+    )
+    res.raise_for_status()
+    token_json = res.json()
+    return Token(
+        token.user_id,
+        token_json['access_token'],
+        token_json['refresh_token'],
+        token.created_at,
+        token.updated_at, # TODO: set the current time (format matters?)
+        token_json['expires_in'],
+    )
 
 
 def get_neo4j_parameters() -> Tuple[str, Tuple[str, str]]:
@@ -150,12 +240,24 @@ def get_postgres_uri() -> str:
     return postgres_uri
 
 
+def get_twitter_credential() -> Tuple[str, str]:
+    """Returns the credential for Twitter.
+    """
+    twitter_secret_arn = os.environ['TWITTER_SECRET_ARN']
+    res = secrets.get_secret_value(SecretId=twitter_secret_arn)
+    parsed = json.loads(res['SecretString'])
+    client_id = str(parsed['clientId'])
+    client_secret = str(parsed['clientSecret'])
+    return client_id, client_secret
+
+
 def lambda_handler(_event, _context):
     """Runs as a Lambda function.
     """
     LOGGER.debug('running Lambda')
     neo4j_uri, credential = get_neo4j_parameters()
     postgres_uri = get_postgres_uri()
+    client_id, client_secret = get_twitter_credential()
     LOGGER.debug(
         'connecting to neo4j: URI=%s, username=%s, password=%s',
         neo4j_uri,
@@ -171,6 +273,25 @@ def lambda_handler(_event, _context):
             for stream in streams:
                 token = get_user_token(postgres, stream.creator)
                 LOGGER.debug("using token: %s", token)
+                twitter = Twarc2(bearer_token=token.access_token)
+                try:
+                    get_latest_tweets(twitter, token.user_id)
+                except requests.exceptions.HTTPError as exc:
+                    if exc.response.status_code == 401:
+                        # refreshes the access token and tries again
+                        LOGGER.debug('refreshing token')
+                        token = try_refresh_token(
+                            token,
+                            client_id,
+                            client_secret,
+                        )
+                        LOGGER.debug('saving new token')
+                        save_user_token(postgres, token)
+                        LOGGER.debug('retrying with token: %s', token)
+                        twitter = Twarc2(bearer_token=token.access_token)
+                        get_latest_tweets(twitter, token.user_id)
+                    else:
+                        raise
         finally:
             postgres.close()
     finally:

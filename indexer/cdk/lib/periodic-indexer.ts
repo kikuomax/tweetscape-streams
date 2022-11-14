@@ -66,6 +66,7 @@ export class PeriodicIndexer extends Construct {
                 environment: {
                     NEO4J_SECRET_ARN: databaseCredentials.secretArn,
                     POSTGRES_SECRET_ARN: databaseCredentials.secretArn,
+                    TWITTER_SECRET_ARN: databaseCredentials.secretArn,
                 },
                 memorySize: 256,
                 timeout: Duration.minutes(15),
