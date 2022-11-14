@@ -4,6 +4,7 @@ import { Construct } from 'constructs';
 import type { DeploymentStage } from './deployment-stage';
 import neo4jConfigSet from '../configs/neo4j';
 import postgresConfigSet from '../configs/postgres';
+import twitterConfigSet from '../configs/twitter';
 
 interface Props {
     /** Deployment stage. */
@@ -29,6 +30,7 @@ export class ExternalResources extends Construct {
         const { deploymentStage } = props;
         const postgresConfig = postgresConfigSet[deploymentStage];
         const neo4jConfig = neo4jConfigSet[deploymentStage];
+        const twitterConfig = twitterConfigSet[deploymentStage];
 
         // TODO: consider about separating secrets for different databases.
         // all credentials are in one place to reduce the charge for now.
@@ -40,6 +42,7 @@ export class ExternalResources extends Construct {
                 secretObjectValue: {
                     ...wrapValuesWithSecretValue(postgresConfig),
                     ...wrapValuesWithSecretValue(neo4jConfig),
+                    ...wrapValuesWithSecretValue(twitterConfig),
                 },
             },
         );

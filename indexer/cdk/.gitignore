@@ -10,3 +10,4 @@ cdk.out
 # user specific configs
 /configs/neo4j.ts
 /configs/postgres.ts
+/configs/twitter.ts
