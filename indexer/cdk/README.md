@@ -91,6 +91,13 @@ The secret has the following keys,
 
 Please edit the values of the keys `postgresUri` and `neo4jPassword` on AWS console or via AWS CLI.
 
+#### External connection to PostgreSQL
+
+You have to allow public access to the PostgreSQL instance.
+Although the [documentation on Fly.io explains how to do this](https://fly.io/docs/postgres/the-basics/connecting/#connecting-external-services), I could not make it.
+So I decided to deploy a PostgreSQL instance from [this template (`fly-apps/postgres-standalone`)](https://github.com/fly-apps/postgres-standalone).
+Securing connection to the PostgreSQL database is another issue.
+
 ## AWS Charges
 
 As of Nov 11, 2022 in N. Virginia (us-east-1) region.
