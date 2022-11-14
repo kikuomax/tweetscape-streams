@@ -17,6 +17,20 @@ export class PeriodicIndexer extends Construct {
 
         const { databaseCredentials } = props.externalResources;
 
+        // TODO: build psycopg2 from the source code
+        // currently, the `psycopg2` folder contains binary I manually built.
+        // however, we can automate the build process.
+        const psycopg2Layer = new lambda.LayerVersion(
+            this,
+            'Psycopg2Layer',
+            {
+                description: 'psycopg2 built for Amazon Linux 2 (ARM64)',
+                code: lambda.Code.fromAsset(path.join('lambda', 'psycopg2')),
+                compatibleRuntimes: [lambda.Runtime.PYTHON_3_8],
+                compatibleArchitectures: [lambda.Architecture.ARM_64],
+            },
+        );
+
         const indexAllStreamsLambda = new PythonFunction(
             this,
             'IndexAllStreamsLambda',
@@ -27,8 +41,10 @@ export class PeriodicIndexer extends Construct {
                 architecture: lambda.Architecture.ARM_64,
                 index: 'index.py',
                 handler: 'lambda_handler',
+                layers: [psycopg2Layer],
                 environment: {
                     NEO4J_SECRET_ARN: databaseCredentials.secretArn,
+                    POSTGRES_SECRET_ARN: databaseCredentials.secretArn,
                 },
                 memorySize: 256,
                 timeout: Duration.minutes(15),
