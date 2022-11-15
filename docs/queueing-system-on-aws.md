@@ -48,8 +48,10 @@ Monthly.
 One AWS Lambda function periodically polls SQS, and there are 5 concurrent polling jobs according to [this SO comment](https://stackoverflow.com/a/59452929).
 So the polling interval matters.
 - 1 polling per 1 second: 86,400 * 5 = 432,000 / day &rightarrow; 12,960,000 / month &rightarrow; 11,960,000 (-1M free) * $0.20 = $2.392
-- 1 polling per 5 seconds: 17,280 * 5 = 86,400 / day &rightarrow; 2,592,000 / month &rightarrow; 1,592,000 (-1M free) * $0.20 = $0.3184
+- 1 polling per 5 seconds: 17,280 * 5 = 86,400 / day &rightarrow; 2,592,000 / month &rightarrow; 1,592,000 (-1M free) * $0.20 = **$0.3184**
 - 1 polling per 10 seconds: 8,640 * 5 = 43,200 / day &rightarrow; 1,296,000 / month &rightarrow; 296,000 (-1M free) * $0.20 = $0.0592
+
+I think 1 polling per 5 seconds will be OK for this system.
 
 Suppose there is a request for processing of 1,000 users.
 - DynamoDB
