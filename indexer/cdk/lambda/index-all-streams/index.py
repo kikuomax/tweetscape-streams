@@ -21,10 +21,11 @@ You can use ``.env`` file to specify them.
 It may be in one of parent folders.
 """
 
+import functools
 import json
 import logging
 import os
-from typing import List, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 import boto3
 from neo4j import Driver, GraphDatabase, Transaction # type: ignore
 import psycopg2
@@ -93,6 +94,86 @@ class Token:
         return f'Token(user_id={repr(self.user_id)}, access_token={repr(self.access_token[:8] + "...")}, refresh_token={repr(self.refresh_token[:8] + "...")}, created_at={repr(self.created_at)}, updated_at={repr(self.updated_at)}, expires_in={repr(self.expires_in)})'
 
 
+class UserTwarc2:
+    """Container of a ``Twarc2`` instance that makes requests on user's behalf.
+    """
+    client_id: str
+    client_secret: str
+    token: Token
+    on_token_refreshed: Optional[Callable[[Token], None]]
+    api: Twarc2
+
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        token: Token,
+        on_token_refreshed: Optional[Callable[[Token], None]] = None,
+    ):
+        """Initializes with a given user token.
+
+        :param str client_id: Twitter app client ID.
+
+        :param str client_secret: Twitter app client secret.
+
+        :param Token token: user token.
+
+        :param Callable[[Token], None]? on_token_refreshed: optional function
+        that is called when the user token is refreshed. You can use this
+        function to save the new token.
+        """
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.token = token
+        self.on_token_refreshed = on_token_refreshed
+        self.api = Twarc2(bearer_token=token.access_token)
+
+    def execute_with_retry_if_unauthorized(self, func: Callable[[Twarc2], Any]):
+        """Runs a given function with a retry when the request is not
+        authorized.
+        """
+        try:
+            return func(self.api)
+        except requests.exceptions.HTTPError as exc:
+            if exc.response.status_code == 401:
+                # refreshes the access token and retries
+                LOGGER.debug('refreshing token')
+                self.refresh_token()
+                LOGGER.debug('retrying with token: %s', self.token)
+                self.api = Twarc2(bearer_token=self.token.access_token)
+                return func(self.api)
+            raise
+
+    def refresh_token(self):
+        """Tries to refresh the user token.
+        """
+        client = requests.Session()
+        client.headers.update({
+            'Content-Type': 'application/x-www-form-urlencoded',
+        })
+        res = client.post(
+            'https://api.twitter.com/2/oauth2/token',
+            {
+                'refresh_token': self.token.refresh_token,
+                'grant_type': 'refresh_token',
+                'client_id': self.client_id,
+            },
+            auth=(self.client_id, self.client_secret), # basic authentication
+        )
+        res.raise_for_status()
+        token_json = res.json()
+        self.token = Token(
+            self.token.user_id,
+            token_json['access_token'],
+            token_json['refresh_token'],
+            self.token.created_at,
+            self.token.updated_at, # TODO: set the current time (format matters?)
+            token_json['expires_in'],
+        )
+        if self.on_token_refreshed:
+            self.on_token_refreshed(self.token)
+
+
 def read_all_streams(tx: Transaction) -> List[Stream]:
     """Reads all streams on the graph database.
     """
@@ -153,6 +234,7 @@ def get_user_token(postgres, username: str) -> Token:
 def save_user_token(postgres, token: Token):
     """Saves a given user token in the database.
     """
+    LOGGER.debug('saving user token: %s', token)
     with postgres.cursor() as curs:
         curs.execute(
             'UPDATE tokens'
@@ -183,36 +265,6 @@ def get_latest_tweets(twitter: Twarc2, user_id: str):
     )
     for num, tweet in enumerate(res):
         LOGGER.debug('tweet[%d]: %s', num, tweet)
-
-
-def try_refresh_token(
-    token: Token,
-    client_id: str,
-    client_secret: str,
-) -> Token:
-    """Tries to refresh the access token with a given refresh token.
-    """
-    client = requests.Session()
-    client.headers.update({'Content-Type': 'application/x-www-form-urlencoded'})
-    res = client.post(
-        'https://api.twitter.com/2/oauth2/token',
-        {
-            'refresh_token': token.refresh_token,
-            'grant_type': 'refresh_token',
-            'client_id': client_id,
-        },
-        auth=(client_id, client_secret), # basic authentication
-    )
-    res.raise_for_status()
-    token_json = res.json()
-    return Token(
-        token.user_id,
-        token_json['access_token'],
-        token_json['refresh_token'],
-        token.created_at,
-        token.updated_at, # TODO: set the current time (format matters?)
-        token_json['expires_in'],
-    )
 
 
 def get_neo4j_parameters() -> Tuple[str, Tuple[str, str]]:
@@ -273,25 +325,15 @@ def lambda_handler(_event, _context):
             for stream in streams:
                 token = get_user_token(postgres, stream.creator)
                 LOGGER.debug("using token: %s", token)
-                twitter = Twarc2(bearer_token=token.access_token)
-                try:
-                    get_latest_tweets(twitter, token.user_id)
-                except requests.exceptions.HTTPError as exc:
-                    if exc.response.status_code == 401:
-                        # refreshes the access token and tries again
-                        LOGGER.debug('refreshing token')
-                        token = try_refresh_token(
-                            token,
-                            client_id,
-                            client_secret,
-                        )
-                        LOGGER.debug('saving new token')
-                        save_user_token(postgres, token)
-                        LOGGER.debug('retrying with token: %s', token)
-                        twitter = Twarc2(bearer_token=token.access_token)
-                        get_latest_tweets(twitter, token.user_id)
-                    else:
-                        raise
+                twitter = UserTwarc2(
+                    client_id,
+                    client_secret,
+                    token,
+                    functools.partial(save_user_token, postgres)
+                )
+                twitter.execute_with_retry_if_unauthorized(
+                    functools.partial(get_latest_tweets, user_id=token.user_id)
+                )
         finally:
             postgres.close()
     finally:
