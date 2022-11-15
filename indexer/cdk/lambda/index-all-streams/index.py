@@ -201,7 +201,7 @@ def try_refresh_token(
             'grant_type': 'refresh_token',
             'client_id': client_id,
         },
-        auth=(client_id, client_secret),
+        auth=(client_id, client_secret), # basic authentication
     )
     res.raise_for_status()
     token_json = res.json()
