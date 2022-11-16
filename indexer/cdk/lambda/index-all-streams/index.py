@@ -138,14 +138,28 @@ class UserTwarc2:
             if exc.response.status_code == 401:
                 # refreshes the access token and retries
                 LOGGER.debug('refreshing token')
-                self.refresh_token()
-                LOGGER.debug('retrying with token: %s', self.token)
-                self.api = Twarc2(bearer_token=self.token.access_token)
-                return func(self.api)
+                try:
+                    self.refresh_tokens()
+                except requests.exceptions.HTTPError as exc2:
+                    if exc2.response.status_code == 400:
+                        # refresh token may be out of sync
+                        LOGGER.warning(
+                            'refresh token may be out of sync. you have to'
+                            ' reset tokens by logging in to the'
+                            ' tweetscape-streams app on a browser',
+                        )
+                    raise
+                else:
+                    LOGGER.debug('retrying with token: %s', self.token)
+                    self.api = Twarc2(bearer_token=self.token.access_token)
+                    return func(self.api)
             raise
 
-    def refresh_token(self):
-        """Tries to refresh the user token.
+    def refresh_tokens(self):
+        """Refreshes the Twitter account tokens.
+
+        :raise requests.exceptions.HTTPError: if the update of the Twitter
+        account tokens has failed.
         """
         client = requests.Session()
         client.headers.update({
