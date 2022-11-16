@@ -24,6 +24,7 @@ It may be in one of parent folders.
 """
 
 import functools
+import itertools
 import json
 import logging
 import os
@@ -343,7 +344,7 @@ def save_twitter_account_token(postgres, token: Token):
         postgres.commit() # TODO: is this necessary?
 
 
-def get_latest_tweets(twitter: Twarc2, account_id: str):
+def get_latest_tweets(twitter: Twarc2, account_id: str, max_results=5):
     """Obtains the latest tweets of a given Twitter account.
 
     :raises requests.exceptions.HTTPError: If there is an error to access the
@@ -351,9 +352,11 @@ def get_latest_tweets(twitter: Twarc2, account_id: str):
     """
     res = twitter.timeline(
         user=account_id,
-        max_results=5,
+        max_results=max_results,
     )
-    for num, tweet in enumerate(res):
+    # DO NOT iterate over res.
+    # it will try to retrieve as many tweets as possible.
+    for num, tweet in enumerate(itertools.islice(res, max_results)):
         LOGGER.debug('tweet[%d]: %s', num, tweet)
 
 
@@ -380,9 +383,14 @@ def index_all_streams(
             token,
             functools.partial(save_twitter_account_token, postgres)
         )
-        twitter.execute_with_retry_if_unauthorized(
-            functools.partial(get_latest_tweets, account_id=token.account_id)
-        )
+        for seed_account in stream.seed_accounts:
+            LOGGER.debug('getting latest tweets from %s', seed_account.username)
+            twitter.execute_with_retry_if_unauthorized(
+                functools.partial(
+                    get_latest_tweets,
+                    account_id=seed_account.account_id,
+                )
+            )
 
 
 def get_neo4j_parameters() -> Tuple[str, Tuple[str, str]]:
