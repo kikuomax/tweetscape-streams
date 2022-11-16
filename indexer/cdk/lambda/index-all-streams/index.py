@@ -267,6 +267,34 @@ def get_latest_tweets(twitter: Twarc2, user_id: str):
         LOGGER.debug('tweet[%d]: %s', num, tweet)
 
 
+def index_all_streams(
+    neo4j_driver: Driver,
+    postgres,
+    twitter_cred: Tuple[str, str],
+):
+    """Indexes all streams.
+
+    This is the main routine of the periodic Indexer.
+
+    :param Tuple[str,str] twitter_cred: A tuple of Twitter app client ID and
+    secret.
+    """
+    streams = fetch_streams(neo4j_driver)
+    for stream in streams:
+        token = get_user_token(postgres, stream.creator)
+        LOGGER.debug("using token: %s", token)
+        client_id, client_secret = twitter_cred
+        twitter = UserTwarc2(
+            client_id,
+            client_secret,
+            token,
+            functools.partial(save_user_token, postgres)
+        )
+        twitter.execute_with_retry_if_unauthorized(
+            functools.partial(get_latest_tweets, user_id=token.user_id)
+        )
+
+
 def get_neo4j_parameters() -> Tuple[str, Tuple[str, str]]:
     """Returns connection parameters for the neo4j database.
 
@@ -307,37 +335,25 @@ def lambda_handler(_event, _context):
     """Runs as a Lambda function.
     """
     LOGGER.debug('running Lambda')
-    neo4j_uri, credential = get_neo4j_parameters()
+    neo4j_uri, neo4j_cred = get_neo4j_parameters()
     postgres_uri = get_postgres_uri()
-    client_id, client_secret = get_twitter_credential()
+    twitter_cred = get_twitter_credential()
     LOGGER.debug(
         'connecting to neo4j: URI=%s, username=%s, password=%s',
         neo4j_uri,
-        credential[0],
-        (credential[1] and '****') or 'None',
+        neo4j_cred[0],
+        (neo4j_cred[1] and '****') or 'None',
     )
-    driver = GraphDatabase.driver(neo4j_uri, auth=credential)
+    neo4j_driver = GraphDatabase.driver(neo4j_uri, auth=neo4j_cred)
     try:
         LOGGER.debug('connecting to PostgreSQL')
         postgres = psycopg2.connect(postgres_uri)
         try:
-            streams = fetch_streams(driver)
-            for stream in streams:
-                token = get_user_token(postgres, stream.creator)
-                LOGGER.debug("using token: %s", token)
-                twitter = UserTwarc2(
-                    client_id,
-                    client_secret,
-                    token,
-                    functools.partial(save_user_token, postgres)
-                )
-                twitter.execute_with_retry_if_unauthorized(
-                    functools.partial(get_latest_tweets, user_id=token.user_id)
-                )
+            index_all_streams(neo4j_driver, postgres, twitter_cred)
         finally:
             postgres.close()
     finally:
-        driver.close()
+        neo4j_driver.close()
 
 
 def run_local():
