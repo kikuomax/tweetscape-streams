@@ -27,7 +27,7 @@ import functools
 import json
 import logging
 import os
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from neo4j import Driver, GraphDatabase, Transaction # type: ignore
 import psycopg2
 import requests
@@ -42,27 +42,77 @@ if __name__ != '__main__':
     secrets = boto3.client('secretsmanager')
 
 
+class TwitterAccount:
+    """Twitter account.
+    """
+    account_id: str
+    username: str
+
+    def __init__(self, account_id: str, username: str):
+        """Initializes with ID and name.
+        """
+        self.account_id = account_id
+        self.username = username
+
+    @staticmethod
+    def parse_node(node: Dict[str, Any]):
+        """Parses a given neo4j node.
+        """
+        return TwitterAccount(
+            account_id=node['id'],
+            username=node['username'],
+        )
+
+    def __str__(self):
+        return f'TwitterAccount(id={self.account_id}, username={self.username})'
+
+    def __repr__(self):
+        return (
+            'TwitterAccount('
+            f'id={repr(self.account_id)}, '
+            f'username={repr(self.username)}'
+            ')'
+        )
+
+
 class Stream:
     """Stream.
     """
     name: str
-    creator: str
-    seed_usernames: List[str]
+    creator: TwitterAccount
+    seed_accounts: List[TwitterAccount]
 
-    def __init__(self, name: str, creator: str, seed_usernames: List[str]):
-        """Initializes with the stream name and creator.
+    def __init__(
+        self,
+        name: str,
+        creator: TwitterAccount,
+        seed_accounts: List[TwitterAccount],
+    ):
+        """Initializes with the stream name, creator, and seed accounts.
         """
         self.name = name
         self.creator = creator
-        self.seed_usernames = seed_usernames
+        self.seed_accounts = seed_accounts
 
     def __str__(self):
         """Returns a string representation.
         """
-        return f'Stream(name={self.name}, creator={self.creator}, seed_usernames={self.seed_usernames})'
+        return (
+            'Stream('
+            f'name={self.name}, '
+            f'creator={self.creator}, '
+            f'seed_accounts={self.seed_accounts}'
+            ')'
+        )
 
     def __repr__(self):
-        return f'Stream(name={repr(self.name)}, creator={repr(self.creator)}, seed_usernames={repr(self.seed_usernames)})'
+        return (
+            'Stream('
+            f'name={repr(self.name)}, '
+            f'creator={repr(self.creator)}, '
+            f'seed_accounts={repr(self.seed_accounts)}'
+            ')'
+        )
 
 
 class Token:
@@ -91,10 +141,28 @@ class Token:
         self.expires_in = expires_in
 
     def __str__(self):
-        return f'Token(user_id={self.user_id}, access_token={self.access_token[:8]}..., refresh_token={self.refresh_token[:8]}..., created_at={self.created_at}, updated_at={self.updated_at}, expires_in={self.expires_in})'
+        return (
+            'Token('
+            f'user_id={self.user_id}, '
+            f'access_token={self.access_token[:8]}..., '
+            f'refresh_token={self.refresh_token[:8]}..., '
+            f'created_at={self.created_at}, '
+            f'updated_at={self.updated_at}, '
+            f'expires_in={self.expires_in}'
+            ')'
+        )
 
     def __repr__(self):
-        return f'Token(user_id={repr(self.user_id)}, access_token={repr(self.access_token[:8] + "...")}, refresh_token={repr(self.refresh_token[:8] + "...")}, created_at={repr(self.created_at)}, updated_at={repr(self.updated_at)}, expires_in={repr(self.expires_in)})'
+        return (
+            'Token('
+            f'user_id={repr(self.user_id)}, '
+            f'access_token={repr(self.access_token[:8] + "...")}, '
+            f'refresh_token={repr(self.refresh_token[:8] + "...")}, '
+            f'created_at={repr(self.created_at)}, '
+            f'updated_at={repr(self.updated_at)}, '
+            f'expires_in={repr(self.expires_in)}'
+            ')'
+        )
 
 
 class UserTwarc2:
@@ -197,14 +265,20 @@ def read_all_streams(tx: Transaction) -> List[Stream]:
     results = tx.run(
         "MATCH (s:Stream)-[:CONTAINS]->(u:User)"
         "MATCH (c:User)-[:CREATED]->(s)"
-        "RETURN s as stream, collect(c) as creator, collect(u) as seed_users"
+        "RETURN s as stream, collect(c) as creator, collect(u) as seedAccounts"
     )
     def extract(record) -> Stream:
         stream = record['stream']
-        creator = record['creator'][0] # should be one
-        seed_users = record['seed_users']
-        seed_usernames = [u['username'] for u in seed_users]
-        return Stream(stream['name'], creator['username'], seed_usernames)
+        creator = TwitterAccount.parse_node(record['creator'][0]) # should be one
+        seed_account_nodes = record['seedAccounts']
+        seed_accounts = [
+            TwitterAccount.parse_node(a) for a in seed_account_nodes
+        ]
+        return Stream(
+            stream['name'],
+            creator,
+            seed_accounts,
+        )
     return [extract(r) for r in results]
 
 
@@ -298,7 +372,7 @@ def index_all_streams(
     """
     streams = fetch_streams(neo4j_driver)
     for stream in streams:
-        token = get_user_token(postgres, stream.creator)
+        token = get_user_token(postgres, stream.creator.username)
         LOGGER.debug("using token: %s", token)
         client_id, client_secret = twitter_cred
         twitter = UserTwarc2(
