@@ -16,6 +16,8 @@ instead,
 * ``NEO4J_USERNAME``
 * ``NEO4J_PASSWORD``
 * ``DATABASE_URL``: connection URI for the PostgreSQL database.
+* ``OAUTH_CLIENT_ID``: Twitter app client ID
+* ``OAUTH_CLIENT_SECRET``: Twitter app client secret
 
 You can use ``.env`` file to specify them.
 It may be in one of parent folders.
@@ -26,7 +28,6 @@ import json
 import logging
 import os
 from typing import Any, Callable, List, Optional, Tuple
-import boto3
 from neo4j import Driver, GraphDatabase, Transaction # type: ignore
 import psycopg2
 import requests
@@ -36,7 +37,9 @@ from twarc import Twarc2 # type: ignore
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.DEBUG)
 
-secrets = boto3.client('secretsmanager')
+if __name__ != '__main__':
+    import boto3
+    secrets = boto3.client('secretsmanager')
 
 
 class Stream:
@@ -373,22 +376,38 @@ def lambda_handler(_event, _context):
 def run_local():
     """Runs locally.
     """
-    LOGGER.debug('running locally')
-    from dotenv import load_dotenv
-    logging.basicConfig(level=logging.DEBUG)
-    load_dotenv()
     neo4j_uri = os.environ['NEO4J_URI']
     neo4j_username = os.environ['NEO4J_USERNAME']
     neo4j_password = os.environ['NEO4J_PASSWORD']
-    driver = GraphDatabase.driver(
+    postgres_uri = os.environ['DATABASE_URL']
+    twitter_cred = (
+        os.environ['OAUTH_CLIENT_ID'],
+        os.environ['OAUTH_CLIENT_SECRET'],
+    )
+    LOGGER.debug(
+        'connecting to neo4j: URI=%s, username=%s, password=%s',
+        neo4j_uri,
+        neo4j_username,
+        (neo4j_password and '****') or 'None',
+    )
+    neo4j_driver = GraphDatabase.driver(
         neo4j_uri,
         auth=(neo4j_username, neo4j_password),
     )
     try:
-        fetch_streams(driver)
+        LOGGER.debug('connecting to PostgreSQL')
+        postgres = psycopg2.connect(postgres_uri)
+        try:
+            index_all_streams(neo4j_driver, postgres, twitter_cred)
+        finally:
+            postgres.close()
     finally:
-        driver.close()
+        neo4j_driver.close()
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+    LOGGER.debug('running locally')
+    from dotenv import load_dotenv
+    load_dotenv()
     run_local()
