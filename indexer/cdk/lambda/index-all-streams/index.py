@@ -80,6 +80,55 @@ class TwitterAccount:
         )
 
 
+class SeedAccount(TwitterAccount):
+    """Seed Twitter account.
+    """
+    latestTweetId: Optional[str]
+    earliestTweetId: Optional[str]
+
+    def __init__(
+        self,
+        account: TwitterAccount,
+        latest_tweet_id: Optional[str],
+        earliest_tweet_id: Optional[str],
+    ):
+        """Initializes with seed account attributes.
+        """
+        super().__init__(account.account_id, account.username)
+        self.latest_tweet_id = latest_tweet_id
+        self.earliest_tweet_id = earliest_tweet_id
+
+    @staticmethod
+    def parse_node(node: Dict[str, Any]):
+        """Parses a given neo4j node.
+        """
+        return SeedAccount(
+            account=TwitterAccount.parse_node(node),
+            latest_tweet_id=node.get('latestTweetId'),
+            earliest_tweet_id=node.get('earliestTweetId'),
+        )
+
+    def __str__(self):
+        return (
+            'SeedAccount('
+            f'account_id={self.account_id}, '
+            f'username={self.username}, '
+            f'latest_tweet_id={self.latest_tweet_id}, '
+            f'earliest_tweet_id={self.earliest_tweet_id}'
+            ')'
+        )
+
+    def __repr__(self):
+        return (
+            'SeedAccount('
+            f'account_id={repr(self.account_id)}, '
+            f'username={repr(self.username)}, '
+            f'latest_tweet_id={repr(self.latest_tweet_id)}, '
+            f'earliest_tweet_id={repr(self.earliest_tweet_id)}'
+            ')'
+        )
+
+
 class Stream:
     """Stream.
     """
@@ -277,9 +326,7 @@ def read_all_streams(tx: Transaction) -> List[Stream]:
         stream = record['stream']
         creator = TwitterAccount.parse_node(record['creator'][0]) # should be one
         seed_account_nodes = record['seedAccounts']
-        seed_accounts = [
-            TwitterAccount.parse_node(a) for a in seed_account_nodes
-        ]
+        seed_accounts = [SeedAccount.parse_node(a) for a in seed_account_nodes]
         return Stream(
             stream['name'],
             creator,
@@ -348,15 +395,21 @@ def save_twitter_account_token(postgres, token: Token):
         postgres.commit() # TODO: is this necessary?
 
 
-def get_latest_tweets(twitter: Twarc2, account_id: str, max_results=5):
-    """Obtains the latest tweets of a given Twitter account.
+def get_latest_tweets(twitter: Twarc2, account: SeedAccount, max_results=5):
+    """Obtains the latest tweets of a given seed Twitter account.
 
     :raises requests.exceptions.HTTPError: If there is an error to access the
     Twitter API.
     """
+    latest_tweet_id = account.latest_tweet_id
+    if account.earliest_tweet_id is None:
+        # resets a half-open range
+        latest_tweet_id = None
+    # TODO: define pull_tweets function
     res = twitter.timeline(
-        user=account_id,
+        user=account.account_id,
         max_results=max_results,
+        since_id=latest_tweet_id,
     )
     # DO NOT iterate over res.
     # it will try to retrieve as many tweets as possible.
@@ -366,7 +419,8 @@ def get_latest_tweets(twitter: Twarc2, account_id: str, max_results=5):
         for num, tweet in enumerate(page['data']):
             LOGGER.debug('latest tweet[%d]: %s', num, tweet)
     else:
-        LOGGER.debug('no more tweets from %s', account_id)
+        LOGGER.debug('no newer tweets from %s', account.username)
+    # TODO: update the indexed tweet range of the account
 
 
 def index_all_streams(
@@ -397,7 +451,7 @@ def index_all_streams(
             twitter.execute_with_retry_if_unauthorized(
                 functools.partial(
                     get_latest_tweets,
-                    account_id=seed_account.account_id,
+                    account=seed_account,
                 )
             )
 
