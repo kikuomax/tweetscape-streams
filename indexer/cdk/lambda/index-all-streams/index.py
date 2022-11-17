@@ -24,7 +24,6 @@ It may be in one of parent folders.
 """
 
 import functools
-import itertools
 import json
 import logging
 import os
@@ -65,12 +64,17 @@ class TwitterAccount:
         )
 
     def __str__(self):
-        return f'TwitterAccount(id={self.account_id}, username={self.username})'
+        return (
+            'TwitterAccount('
+            f'account_id={self.account_id}, '
+            f'username={self.username}'
+            ')'
+        )
 
     def __repr__(self):
         return (
             'TwitterAccount('
-            f'id={repr(self.account_id)}, '
+            f'account_id={repr(self.account_id)}, '
             f'username={repr(self.username)}'
             ')'
         )
@@ -356,8 +360,13 @@ def get_latest_tweets(twitter: Twarc2, account_id: str, max_results=5):
     )
     # DO NOT iterate over res.
     # it will try to retrieve as many tweets as possible.
-    for num, tweet in enumerate(itertools.islice(res, max_results)):
-        LOGGER.debug('tweet[%d]: %s', num, tweet)
+    # https://twarc-project.readthedocs.io/en/latest/api/library/#working-with-generators
+    page = next(res, None)
+    if page is not None:
+        for num, tweet in enumerate(page['data']):
+            LOGGER.debug('latest tweet[%d]: %s', num, tweet)
+    else:
+        LOGGER.debug('no more tweets from %s', account_id)
 
 
 def index_all_streams(
