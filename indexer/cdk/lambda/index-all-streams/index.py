@@ -37,6 +37,82 @@ from twarc import Twarc2 # type: ignore
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.DEBUG)
 
+# parameters given to Twarc2.timeline
+TIMELINE_PARAMETERS = {
+    'expansions': ','.join([
+        'author_id',
+        'in_reply_to_user_id',
+        'referenced_tweets.id',
+        'referenced_tweets.id.author_id',
+        'entities.mentions.username',
+        'attachments.poll_ids',
+        'attachments.media_keys',
+        'geo.place_id',
+    ]),
+    'tweet_fields': ','.join([
+        'attachments',
+        'author_id',
+        'context_annotations',
+        'conversation_id',
+        'created_at',
+        'entities',
+        'geo',
+        'id',
+        'in_reply_to_user_id',
+        'lang',
+        'public_metrics',
+        'text',
+        'possibly_sensitive',
+        'referenced_tweets',
+        'reply_settings',
+        'source',
+        'withheld',
+    ]),
+    'user_fields': ','.join([
+        'created_at',
+        'description',
+        'entities',
+        'id',
+        'location',
+        'name',
+        'pinned_tweet_id',
+        'profile_image_url',
+        'protected',
+        'public_metrics',
+        'url',
+        'username',
+        'verified',
+    ]),
+    'media_fields': ','.join([
+        'alt_text',
+        'duration_ms',
+        'height',
+        'media_key',
+        'preview_image_url',
+        'type',
+        'url',
+        'width',
+        'public_metrics',
+    ]),
+    'poll_fields': ','.join([
+        'duration_minutes',
+        'end_datetime',
+        'id',
+        'options',
+        'voting_status',
+    ]),
+    'place_fields': ','.join([
+        'contained_within',
+        'country',
+        'country_code',
+        'full_name',
+        'geo',
+        'id',
+        'name',
+        'place_type',
+    ]),
+}
+
 if __name__ != '__main__':
     import boto3
     secrets = boto3.client('secretsmanager')
@@ -395,7 +471,52 @@ def save_twitter_account_token(postgres, token: Token):
         postgres.commit() # TODO: is this necessary?
 
 
-def get_latest_tweets(twitter: Twarc2, account: SeedAccount, max_results=5):
+def pull_tweets(
+    twitter: Twarc2,
+    account_id: str,
+    since_id: Optional[str]=None,
+    page_size=5,
+):
+    """Obtains tweets posted since a given tweet ID.
+
+    Pulls as many tweets as possible regardless of ``page_size`` if ``since_id``
+    is specified. Since the Twitter API orders tweets from newer to older, all
+    the tweets since ``since_id`` may not fit in a single page.
+
+    Pulls a single page of tweets if ``since_id`` is omitted.
+
+    :param int page_size: maximum number of tweets included in a single page.
+    Must be ≥ 5.
+
+    :raises requests.exceptions.HTTPError: if there is an error to access the
+    Twitter API.
+    """
+    # TODO: support until_id
+    res = twitter.timeline(
+        user=account_id,
+        max_results=page_size,
+        since_id=since_id,
+        **TIMELINE_PARAMETERS,
+    )
+    if since_id is None:
+        page = next(res, None)
+        if page is not None:
+            tweets = page['data']
+        else:
+            tweets = []
+    else:
+        # flattens tweets in all the pages
+        tweets = (tweet for page in res for tweet in page['data'])
+    # TODO: return tweets instead
+    tweeted = False
+    for num, tweet in enumerate(tweets):
+        LOGGER.debug('latest tweet [%d]: %s', num, tweet)
+        tweeted = True
+    if not tweeted:
+        LOGGER.debug('no newer tweets')
+
+
+def get_latest_tweets(twitter: Twarc2, account: SeedAccount):
     """Obtains the latest tweets of a given seed Twitter account.
 
     :raises requests.exceptions.HTTPError: If there is an error to access the
@@ -405,21 +526,7 @@ def get_latest_tweets(twitter: Twarc2, account: SeedAccount, max_results=5):
     if account.earliest_tweet_id is None:
         # resets a half-open range
         latest_tweet_id = None
-    # TODO: define pull_tweets function
-    res = twitter.timeline(
-        user=account.account_id,
-        max_results=max_results,
-        since_id=latest_tweet_id,
-    )
-    # DO NOT iterate over res.
-    # it will try to retrieve as many tweets as possible.
-    # https://twarc-project.readthedocs.io/en/latest/api/library/#working-with-generators
-    page = next(res, None)
-    if page is not None:
-        for num, tweet in enumerate(page['data']):
-            LOGGER.debug('latest tweet[%d]: %s', num, tweet)
-    else:
-        LOGGER.debug('no newer tweets from %s', account.username)
+    pull_tweets(twitter, account.account_id, since_id=latest_tweet_id)
     # TODO: update the indexed tweet range of the account
 
 
