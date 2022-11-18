@@ -24,14 +24,15 @@ It may be in one of parent folders.
 """
 
 import functools
+import itertools
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from neo4j import Driver, GraphDatabase, Transaction # type: ignore
 import psycopg2
 import requests
-from twarc import Twarc2 # type: ignore
+from twarc import Twarc2, ensure_flattened # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -390,6 +391,65 @@ class AccountTwarc2:
             self.on_token_refreshed(self.token)
 
 
+class TweetRange:
+    """Iterates over tweets and also remembers the tweet ID range.
+
+    I am not sure this additional complexity is necessary, but in case
+    ``ensure_flattened`` might slip another user's tweet into the tweet
+    sequence.
+    """
+    pages: Iterable[Any]
+    _latest_tweet_id: Optional[str]
+    _earliest_tweet_id: Optional[str]
+    exhausted: bool
+
+    def __init__(self, pages: Iterable[Any]):
+        """Initializes with an iterable of tweet pages.
+        """
+        self.pages = pages
+        self._latest_tweet_id = None
+        self._earliest_tweet_id = None
+        self.exhausted = False
+
+    def __iter__(self):
+        """Returns an iterator of all the items.
+        """
+        for page in self.pages:
+            page_data = page['data']
+            # updates the range
+            if self._latest_tweet_id is None:
+                self._latest_tweet_id = page_data[0]['id']
+            self._earliest_tweet_id = page_data[-1]['id']
+            # flattens the page and yield tweets one by one
+            for tweet in ensure_flattened(page):
+                yield tweet
+        self.exhausted = True
+
+    @property
+    def latest_tweet_id(self) -> Optional[str]:
+        """Latest tweet ID.
+
+        ``None`` if no page was given.
+
+        :raises AttributeError: if the iteration over tweets has not done yet.
+        """
+        if not self.exhausted:
+            raise AttributeError('tweet iteration has not done yet!')
+        return self._latest_tweet_id
+
+    @property
+    def earliest_tweet_id(self) -> Optional[str]:
+        """Earliest tweet ID.
+
+        ``None`` if no page was given.
+
+        :raises AttributeError: if the iteration over tweets has not done yet.
+        """
+        if not self.exhausted:
+            raise AttributeError('tweet iteration has not done yet!')
+        return self._earliest_tweet_id
+
+
 def read_all_streams(tx: Transaction) -> List[Stream]:
     """Reads all streams on the graph database.
     """
@@ -499,20 +559,22 @@ def pull_tweets(
         **TIMELINE_PARAMETERS,
     )
     if since_id is None:
-        page = next(res, None)
-        if page is not None:
-            tweets = page['data']
-        else:
-            tweets = []
+        pages = itertools.islice(res, 1) # at most one page
     else:
-        # flattens tweets in all the pages
-        tweets = (tweet for page in res for tweet in page['data'])
+        pages = res
     # TODO: return tweets instead
     tweeted = False
-    for num, tweet in enumerate(tweets):
+    tweet_range = TweetRange(pages)
+    for num, tweet in enumerate(tweet_range):
         LOGGER.debug('latest tweet [%d]: %s', num, tweet)
         tweeted = True
-    if not tweeted:
+    if tweeted:
+        LOGGER.debug(
+            'latest tweet ID: %s, earliest tweet ID: %s',
+            tweet_range.latest_tweet_id,
+            tweet_range.earliest_tweet_id,
+        )
+    else:
         LOGGER.debug('no newer tweets')
 
 
