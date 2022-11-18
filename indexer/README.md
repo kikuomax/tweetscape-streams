@@ -2,6 +2,14 @@
 
 The [`cdk`](./cdk) folder contains an [AWS Cloud Development Kit (CDK)](https://aws.amazon.com/cdk/) stack that provisions Indexer resources on AWS.
 
+## Prerequisites
+
+### Public PostgreSQL instance
+
+To run Indexer, you have to allow external services to connect to the PostgreSQL database.
+I could not make a PostgreSQL instance created with the [`fly postgres` command](https://fly.io/docs/postgres/) public.
+My workaround was to manually deploy another PostgreSQL instance using [this template (`flyapps/postgres-standalone`)](https://github.com/fly-apps/postgres-standalone).
+
 ## Running locally
 
 To locally run Indexer, you have to install PostgreSQL server on your local machine.
