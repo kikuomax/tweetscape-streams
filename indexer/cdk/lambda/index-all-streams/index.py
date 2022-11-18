@@ -444,10 +444,6 @@ class TweetsRange:
     """Iterates over pages of tweets and remembers the tweet ID range.
 
     You can use an instance of this class as an iterator of tweets.
-
-    I am not sure this additional complexity is necessary, but in case
-    ``ensure_flattened`` might slip another user's tweet into the tweet
-    sequence.
     """
     pages: Iterable[Any]
     _latest_tweet_id: Optional[str]
@@ -498,14 +494,30 @@ class TweetsRange:
         return self._earliest_tweet_id
 
 
+def flatten_twitter_account_properties(
+    account: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Flattens properties of a given Twitter account object.
+
+    This function modifies ``account``.
+    """
+    account['username'] = account['username'].lower()
+    for key, value in account['public_metrics'].items():
+        account[f'public_metrics.{key}'] = value
+    del account['public_metrics']
+    if 'entities' in account:
+        del account['entities']
+    return account
+
+
 def read_all_streams(tx: Transaction) -> List[Stream]:
     """Reads all streams on the graph database.
     """
-    results = tx.run(
-        "MATCH (s:Stream)-[:CONTAINS]->(u:User)"
-        "MATCH (c:User)-[:CREATED]->(s)"
-        "RETURN s as stream, collect(c) as creator, collect(u) as seedAccounts"
-    )
+    results = tx.run('\n'.join([
+        "MATCH (s:Stream)-[:CONTAINS]->(u:User)",
+        "MATCH (c:User)-[:CREATED]->(s)",
+        "RETURN s as stream, collect(c) as creator, collect(u) as seedAccounts",
+    ]))
     def extract(record) -> Stream:
         stream = record['stream']
         creator = TwitterAccount.parse_node(record['creator'][0]) # should be one
@@ -526,6 +538,44 @@ def fetch_streams(driver: Driver) -> List[Stream]:
         streams = session.execute_read(read_all_streams)
         LOGGER.debug('streams: %s', streams)
         return streams
+
+
+def write_twitter_accounts(tx: Transaction, accounts: Iterable[Any]):
+    """Writes given Twitter accounts to the graph database.
+    """
+    results = tx.run(
+        '\n'.join([
+            'UNWIND $accounts AS a',
+            'MERGE (account:User {username: a.username})',
+            'SET account.id = a.id,',
+            '    account.created_at = a.created_at,',
+            '    account.verified = a.verified,',
+            '    account.profile_image_url = a.profile_image_url,',
+            '    account.name = a.name,',
+            '    account.username = a.username,',
+            '    account.url = a.url,',
+            '    account.description = a.description,',
+            '    account.`public_metrics.followers_count` = a.`public_metrics.followers_count`,',
+            '    account.`public_metrics.following_count` = a.`public_metrics.following_count`,',
+            '    account.`public_metrics.tweet_count` = a.`public_metrics.tweet_count`,',
+            '    account.`public_metrics.listed_count` = a.`public_metrics.listed_count`',
+            'RETURN account',
+        ]),
+        accounts=accounts,
+    )
+    for record in results:
+        account_node = record['account']
+        LOGGER.debug('added user: %s', TwitterAccount.parse_node(account_node))
+
+
+def add_twitter_accounts(driver: Driver, accounts: Iterable[Any]):
+    """Adds given Twitter accounts to the graph database.
+    """
+    LOGGER.debug('adding Twitter accounts: %s', accounts)
+    with driver.session() as session:
+        session.execute_write(
+            functools.partial(write_twitter_accounts, accounts=accounts),
+        )
 
 
 def get_twitter_account_token(postgres, account: TwitterAccount) -> Token:
@@ -613,7 +663,7 @@ def pull_tweets(
     return TweetsRange(pages)
 
 
-def get_latest_tweets(twitter: Twarc2, account: SeedAccount):
+def get_latest_tweets(twitter: Twarc2, account: SeedAccount) -> TweetsRange:
     """Obtains the latest tweets of a given seed Twitter account.
 
     :raises requests.exceptions.HTTPError: If there is an error to access the
@@ -623,25 +673,11 @@ def get_latest_tweets(twitter: Twarc2, account: SeedAccount):
     if account.earliest_tweet_id is None:
         # resets a half-open range with the latest tweets
         latest_tweet_id = None
-    tweets_range = pull_tweets(
+    return pull_tweets(
         twitter,
         account.account_id,
         since_id=latest_tweet_id,
     )
-    num_tweets = 0
-    for page in tweets_range:
-        for tweet in page.tweets:
-            LOGGER.debug('latest tweet [%d]: %s', num_tweets, tweet)
-            num_tweets += 1
-    if num_tweets > 0:
-        LOGGER.debug(
-            'latest tweet ID: %s, earliest tweet ID: %s',
-            tweets_range.latest_tweet_id,
-            tweets_range.earliest_tweet_id,
-        )
-    else:
-        LOGGER.debug('no newer tweets')
-    # TODO: update the indexed tweet range of the account
 
 
 def index_all_streams(
@@ -669,12 +705,21 @@ def index_all_streams(
         )
         for seed_account in stream.seed_accounts:
             LOGGER.debug('getting latest tweets from %s', seed_account.username)
-            twitter.execute_with_retry_if_unauthorized(
+            tweets_range = twitter.execute_with_retry_if_unauthorized(
                 functools.partial(
                     get_latest_tweets,
                     account=seed_account,
                 )
             )
+            # processes tweets and included objects
+            for tweets_page in tweets_range:
+                add_twitter_accounts(
+                    neo4j_driver,
+                    [flatten_twitter_account_properties(a)
+                        for a in tweets_page.included_users],
+                )
+                # TODO: process media, and tweets
+            # TODO: update the indexed tweet range of the seed account
 
 
 def get_neo4j_parameters() -> Tuple[str, Tuple[str, str]]:
