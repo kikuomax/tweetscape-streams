@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from neo4j import Driver, GraphDatabase, Transaction # type: ignore
 import psycopg2
 import requests
-from twarc import Twarc2, ensure_flattened # type: ignore
+from twarc import Twarc2 # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -391,8 +391,59 @@ class AccountTwarc2:
             self.on_token_refreshed(self.token)
 
 
-class TweetRange:
-    """Iterates over tweets and also remembers the tweet ID range.
+class TweetsPage:
+    """Wraps a tweets page objects with handy properties.
+    """
+    page: Dict[str, Any]
+
+    def __init__(self, page: Dict[str, Any]):
+        """Initializes with a given tweets page object.
+        """
+        self.page = page
+
+    @property
+    def tweets(self) -> Iterable[Any]:
+        """Tweets in this page.
+        """
+        return self.page['data']
+
+    @property
+    def includes(self) -> Dict[str, Any]:
+        """"includes" object.
+
+        An empty ``dict`` if this page has no "includes" object.
+        """
+        return self.page.get('includes') or {}
+
+    @property
+    def included_users(self) -> Iterable[Any]:
+        """Users (Twitter accounts) included in this page.
+
+        An empty iterable if this page includes no users.
+        """
+        return self.includes.get('users') or []
+
+    @property
+    def included_tweets(self) -> Iterable[Any]:
+        """Tweets included in this page.
+
+        An empty iterable if this page includes no tweets.
+        """
+        return self.includes.get('tweets') or []
+
+    @property
+    def included_media(self) -> Iterable[Any]:
+        """Media included in this page.
+
+        An empty iterable if this page includes no media.
+        """
+        return self.includes.get('media') or []
+
+
+class TweetsRange:
+    """Iterates over pages of tweets and remembers the tweet ID range.
+
+    You can use an instance of this class as an iterator of tweets.
 
     I am not sure this additional complexity is necessary, but in case
     ``ensure_flattened`` might slip another user's tweet into the tweet
@@ -416,13 +467,10 @@ class TweetRange:
         """
         for page in self.pages:
             page_data = page['data']
-            # updates the range
             if self._latest_tweet_id is None:
                 self._latest_tweet_id = page_data[0]['id']
             self._earliest_tweet_id = page_data[-1]['id']
-            # flattens the page and yield tweets one by one
-            for tweet in ensure_flattened(page):
-                yield tweet
+            yield TweetsPage(page)
         self.exhausted = True
 
     @property
@@ -536,7 +584,7 @@ def pull_tweets(
     account_id: str,
     since_id: Optional[str]=None,
     page_size=5,
-):
+) -> TweetsRange:
     """Obtains tweets posted since a given tweet ID.
 
     Pulls as many tweets as possible regardless of ``page_size`` if ``since_id``
@@ -562,20 +610,7 @@ def pull_tweets(
         pages = itertools.islice(res, 1) # at most one page
     else:
         pages = res
-    # TODO: return tweets instead
-    tweeted = False
-    tweet_range = TweetRange(pages)
-    for num, tweet in enumerate(tweet_range):
-        LOGGER.debug('latest tweet [%d]: %s', num, tweet)
-        tweeted = True
-    if tweeted:
-        LOGGER.debug(
-            'latest tweet ID: %s, earliest tweet ID: %s',
-            tweet_range.latest_tweet_id,
-            tweet_range.earliest_tweet_id,
-        )
-    else:
-        LOGGER.debug('no newer tweets')
+    return TweetsRange(pages)
 
 
 def get_latest_tweets(twitter: Twarc2, account: SeedAccount):
@@ -586,9 +621,26 @@ def get_latest_tweets(twitter: Twarc2, account: SeedAccount):
     """
     latest_tweet_id = account.latest_tweet_id
     if account.earliest_tweet_id is None:
-        # resets a half-open range
+        # resets a half-open range with the latest tweets
         latest_tweet_id = None
-    pull_tweets(twitter, account.account_id, since_id=latest_tweet_id)
+    tweets_range = pull_tweets(
+        twitter,
+        account.account_id,
+        since_id=latest_tweet_id,
+    )
+    num_tweets = 0
+    for page in tweets_range:
+        for tweet in page.tweets:
+            LOGGER.debug('latest tweet [%d]: %s', num_tweets, tweet)
+            num_tweets += 1
+    if num_tweets > 0:
+        LOGGER.debug(
+            'latest tweet ID: %s, earliest tweet ID: %s',
+            tweets_range.latest_tweet_id,
+            tweets_range.earliest_tweet_id,
+        )
+    else:
+        LOGGER.debug('no newer tweets')
     # TODO: update the indexed tweet range of the account
 
 
