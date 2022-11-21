@@ -27,6 +27,7 @@ export class CdkStack extends cdk.Stack {
             this,
             'PeriodicIndexer',
             {
+                deploymentStage,
                 externalResources,
             },
         );

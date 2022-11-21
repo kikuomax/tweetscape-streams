@@ -1,14 +1,22 @@
 import * as path from 'path';
-import { Duration, aws_lambda as lambda } from 'aws-cdk-lib';
+import {
+    Duration,
+    aws_events as events,
+    aws_events_targets as targets,
+    aws_lambda as lambda,
+} from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import {
     PythonFunction,
     PythonLayerVersion,
 } from '@aws-cdk/aws-lambda-python-alpha';
 
+import type { DeploymentStage } from './deployment-stage';
 import type { ExternalResources } from './external-resources';
 
 interface Props {
+    /** Deployment stage. */
+    deploymentStage: DeploymentStage;
     /** External resources. */
     externalResources: ExternalResources;
 }
@@ -18,6 +26,7 @@ export class PeriodicIndexer extends Construct {
     constructor(scope: Construct, id: string, props: Props) {
         super(scope, id);
 
+        const { deploymentStage } = props;
         const { databaseCredentials } = props.externalResources;
 
         // dependencies of Indexer
@@ -73,5 +82,22 @@ export class PeriodicIndexer extends Construct {
             },
         );
         databaseCredentials.grantRead(indexAllStreamsLambda);
+
+        // runs Indexer every 15 minutes.
+        // you have to enable this rule after provisioning it.
+        new events.Rule(this, 'RunPeriodicIndexer', {
+            description: `Periodically runs Indexer (${deploymentStage})`,
+            enabled: false,
+            targets: [
+                new targets.LambdaFunction(indexAllStreamsLambda, {
+                    retryAttempts: 0, // no retry
+                    maxEventAge: Duration.minutes(5), // does this matter?
+                    // TODO: configure the dead-letter queue
+                }),
+            ],
+            schedule: events.Schedule.cron({
+                minute: '0/15', // every 15 minutes
+            }),
+        });
     }
 }
