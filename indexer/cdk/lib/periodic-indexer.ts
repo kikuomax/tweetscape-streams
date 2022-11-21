@@ -4,6 +4,7 @@ import {
     aws_events as events,
     aws_events_targets as targets,
     aws_lambda as lambda,
+    aws_sns as sns,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import {
@@ -28,6 +29,12 @@ export class PeriodicIndexer extends Construct {
 
         const { deploymentStage } = props;
         const { databaseCredentials } = props.externalResources;
+
+        // TODO: reuse the following SNS topic and SQS queue if necessary
+        // SNS topic that receives dead letters
+        const deadLetterTopic = new sns.Topic(this, 'DeadLetterTopic', {
+            displayName: `Dead-letter topic (${deploymentStage})`,
+        });
 
         // dependencies of Indexer
         const dependenciesLayer = new PythonLayerVersion(
@@ -79,6 +86,10 @@ export class PeriodicIndexer extends Construct {
                 },
                 memorySize: 256,
                 timeout: Duration.minutes(15),
+                // no retry as this function is frequently invoked
+                // but immediately sends a message to the dead-letter topic
+                retryAttempts: 0,
+                deadLetterTopic,
             },
         );
         databaseCredentials.grantRead(indexAllStreamsLambda);
@@ -90,8 +101,10 @@ export class PeriodicIndexer extends Construct {
             enabled: false,
             targets: [
                 new targets.LambdaFunction(indexAllStreamsLambda, {
-                    retryAttempts: 0, // no retry
-                    maxEventAge: Duration.minutes(5), // does this matter?
+                    // no need for a lot of retries
+                    // next quarter comes soon
+                    retryAttempts: 2,
+                    maxEventAge: Duration.minutes(5),
                     // TODO: configure the dead-letter queue
                 }),
             ],
