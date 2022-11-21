@@ -211,13 +211,13 @@ class Stream:
     """
     name: str
     creator: TwitterAccount
-    seed_accounts: List[TwitterAccount]
+    seed_accounts: List[SeedAccount]
 
     def __init__(
         self,
         name: str,
         creator: TwitterAccount,
-        seed_accounts: List[TwitterAccount],
+        seed_accounts: List[SeedAccount],
     ):
         """Initializes with the stream name, creator, and seed accounts.
         """
@@ -732,6 +732,73 @@ def add_tweets_from(driver: Driver, tweet_list: Iterable[Any]):
         )
 
 
+def write_indexed_tweet_ids(
+    tx: Transaction,
+    account_id: str,
+    latest_tweet_id: str,
+    earliest_tweet_id: str,
+):
+    """Writes indexed tweet IDs of a given seed account to the graph database.
+    """
+    results = tx.run(
+        '\n'.join([
+            'MERGE (a:User {id: $accountId})',
+            'SET a.latestTweetId = $latestTweetId',
+            'SET a.earliestTweetId = $earliestTweetId',
+            'RETURN a',
+        ]),
+        accountId=account_id,
+        latestTweetId=latest_tweet_id,
+        earliestTweetId=earliest_tweet_id,
+    )
+    for record in results:
+        LOGGER.debug(
+            'wrote indexed tweet IDs: %s',
+            SeedAccount.parse_node(record['a']),
+        )
+
+
+def reset_indexed_tweet_ids(
+    driver: Driver,
+    account: SeedAccount,
+    latest_tweet_id: str,
+    earliest_tweet_id: str,
+):
+    """Resets the indexed tweet range of a given seed account on the graph
+    database.
+    """
+    LOGGER.debug('resetting indexed tweet range of %s', account.username)
+    with driver.session() as session:
+        session.execute_write(
+            functools.partial(
+                write_indexed_tweet_ids,
+                account_id=account.account_id,
+                latest_tweet_id=latest_tweet_id,
+                earliest_tweet_id=earliest_tweet_id,
+            )
+        )
+
+
+def update_latest_indexed_tweet_id(
+    driver: Driver,
+    account: SeedAccount,
+    latest_tweet_id: str,
+):
+    """Updates the latest indexed tweet ID of a given seed account on the graph
+    database.
+    """
+    LOGGER.debug('updating indexed tweet ID of %s', account.username)
+    with driver.session() as session:
+        session.execute_write(
+            functools.partial(
+                write_indexed_tweet_ids,
+                account_id=account.account_id,
+                latest_tweet_id=latest_tweet_id,
+                earliest_tweet_id=account.earliest_tweet_id,
+            )
+        )
+
+
 def get_twitter_account_token(postgres, account: TwitterAccount) -> Token:
     """Queries the token of a given Twitter account.
     """
@@ -871,6 +938,7 @@ def index_all_streams(
             )
             # processes tweets and included objects
             # TODO: make them async
+            updated = False
             for tweets_page in tweets_range:
                 add_twitter_accounts(
                     neo4j_driver,
@@ -891,7 +959,26 @@ def index_all_streams(
                     neo4j_driver,
                     [flatten_tweet_properties(t) for t in tweets_page.tweets],
                 )
-            # TODO: update the indexed tweet range of the seed account
+                updated = True
+            # updates the indexed tweet range of the seed account
+            if updated:
+                if seed_account.earliest_tweet_id is None:
+                    # resets the full range
+                    reset_indexed_tweet_ids(
+                        neo4j_driver,
+                        account=seed_account,
+                        latest_tweet_id=tweets_range.latest_tweet_id,
+                        earliest_tweet_id=tweets_range.earliest_tweet_id,
+                    )
+                else:
+                    # updates only the latest
+                    update_latest_indexed_tweet_id(
+                        neo4j_driver,
+                        seed_account,
+                        tweets_range.latest_tweet_id,
+                    )
+            else:
+                LOGGER.debug('no newer tweets from %s', seed_account.username)
 
 
 def get_neo4j_parameters() -> Tuple[str, Tuple[str, str]]:
