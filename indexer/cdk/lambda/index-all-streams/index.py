@@ -847,6 +847,9 @@ def index_all_streams(
     secret.
     """
     streams = fetch_streams(neo4j_driver)
+    # TODO: handle rate limit.
+    # and we should equally distribute rate limit to streams.
+    # how about to randomly choose streams?
     for stream in streams:
         token = get_twitter_account_token(postgres, stream.creator)
         LOGGER.debug("using token: %s", token)
@@ -857,6 +860,7 @@ def index_all_streams(
             token,
             functools.partial(save_twitter_account_token, postgres)
         )
+        # TODO: de-duplicate seed accounts
         for seed_account in stream.seed_accounts:
             LOGGER.debug('getting latest tweets from %s', seed_account.username)
             tweets_range = twitter.execute_with_retry_if_unauthorized(
