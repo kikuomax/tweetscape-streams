@@ -2,7 +2,8 @@
 
 """Indexes all the Stream nodes on the neo4j database.
 
-You have to specify the following environment variables,
+You have to specify the following environment variables if you run this function
+on AWS,
 * ``NEO4J_SECRET_ARN``: ARN of the SecretsManager Secret containing neo4j
   connection parameters.
 * ``POSTGRES_SECRET_ARN``: ARN of the SecretsManager Secret containing
@@ -20,7 +21,11 @@ instead,
 * ``OAUTH_CLIENT_SECRET``: Twitter app client secret
 
 You can use ``.env`` file to specify them.
-It may be in one of parent folders.
+It may be in the current folder or one of parent folders.
+
+You can specify the following optional environment variable,
+* ``TIMELINE_PAGE_SIZE``: number of tweets in a timeline page; i.e., tweets
+  requested in a single query. 100 by default.
 """
 
 import functools
@@ -37,6 +42,8 @@ from twarc import Twarc2 # type: ignore
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.DEBUG)
+
+TIMELINE_PAGE_SIZE = int(os.environ.get('TIMELINE_PAGE_SIZE', 100))
 
 # parameters given to Twarc2.timeline
 TIMELINE_PARAMETERS = {
@@ -566,7 +573,6 @@ def fetch_streams(driver: Driver) -> List[Stream]:
     """
     with driver.session() as session:
         streams = session.execute_read(read_all_streams)
-        LOGGER.debug('streams: %s', streams)
         return streams
 
 
@@ -601,7 +607,6 @@ def write_twitter_accounts(tx: Transaction, accounts: Iterable[Any]):
 def add_twitter_accounts(driver: Driver, accounts: Iterable[Any]):
     """Adds given Twitter accounts to the graph database.
     """
-    LOGGER.debug('adding Twitter accounts: %s', accounts)
     with driver.session() as session:
         session.execute_write(
             functools.partial(write_twitter_accounts, accounts=accounts),
@@ -632,7 +637,6 @@ def write_media(tx: Transaction, media_list: Iterable[Any]):
 def add_media(driver: Driver, media_list: Iterable[Any]):
     """Adds given media objects to the graph database.
     """
-    LOGGER.debug('adding media: %s', media_list)
     with driver.session() as session:
         session.execute_write(
             functools.partial(write_media, media_list=media_list),
@@ -725,7 +729,6 @@ def write_tweets_from(tx: Transaction, tweet_list: Iterable[Any]):
 def add_tweets_from(driver: Driver, tweet_list: Iterable[Any]):
     """Adds given tweet objects to the graph database.
     """
-    LOGGER.debug('adding tweets: %s', tweet_list)
     with driver.session() as session:
         session.execute_write(
             functools.partial(write_tweets_from, tweet_list=tweet_list),
@@ -854,7 +857,7 @@ def pull_tweets(
     twitter: Twarc2,
     account_id: str,
     since_id: Optional[str]=None,
-    page_size=5,
+    page_size=TIMELINE_PAGE_SIZE,
 ) -> TweetsRange:
     """Obtains tweets posted since a given tweet ID.
 
@@ -918,6 +921,7 @@ def index_all_streams(
     # and we should equally distribute rate limit to streams.
     # how about to randomly choose streams?
     for stream in streams:
+        LOGGER.debug('processing stream: %s', stream)
         token = get_twitter_account_token(postgres, stream.creator)
         LOGGER.debug("using token: %s", token)
         client_id, client_secret = twitter_cred
