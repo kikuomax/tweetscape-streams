@@ -532,6 +532,14 @@ def flatten_twitter_media_properties(media: Dict[str, Any]) -> Dict[str, Any]:
     return media
 
 
+def flatten_tweet_properties(tweet: Dict[str, Any]) -> Dict[str, Any]:
+    """Flattens properties of a given tweet object.
+
+    This function modifies ``tweet``.
+    """
+    return flatten_key_value_pairs(tweet, 'public_metrics')
+
+
 def read_all_streams(tx: Transaction) -> List[Stream]:
     """Reads all streams on the graph database.
     """
@@ -628,6 +636,99 @@ def add_media(driver: Driver, media_list: Iterable[Any]):
     with driver.session() as session:
         session.execute_write(
             functools.partial(write_media, media_list=media_list),
+        )
+
+
+def write_tweets_from(tx: Transaction, tweet_list: Iterable[Any]):
+    """Writes given tweet objects to the graph database.
+    """
+    results = tx.run(
+        '\n'.join([
+            'UNWIND $tweets AS t',
+            'MERGE (tweet:Tweet {id: t.id})',
+            'SET tweet.id = t.id,'
+            '    tweet.conversation_id = t.conversation_id,'
+            '    tweet.possibly_sensitive = t.possibly_sensitive,'
+            '    tweet.in_reply_to_user_id = t.in_reply_to_user_id,'
+            '    tweet.lang = t.lang,'
+            '    tweet.text = t.text,'
+            '    tweet.created_at = t.created_at,'
+            '    tweet.reply_settings = t.reply_settings,'
+            '    tweet.author_id = t.author_id,'
+            '    tweet.`public_metrics.retweet_count` = t.`public_metrics.retweet_count`,'
+            '    tweet.`public_metrics.reply_count` = t.`public_metrics.reply_count`,'
+            '    tweet.`public_metrics.like_count` = t.`public_metrics.like_count`,'
+            '    tweet.`public_metrics.quote_count` = t.`public_metrics.quote_count`',
+            'MERGE (author:User {id: t.author_id})',
+            'MERGE (author)-[:POSTED]->(tweet)',
+            'FOREACH (m IN t.entities.mentions |',
+            '    MERGE (mentioned:User {username: m.username})',
+            '    MERGE (tweet)-[:MENTIONED]->(mentioned)',
+            ')',
+            'FOREACH (u IN t.entities.urls |',
+            '    MERGE (url:Link {url: u.url})',
+            '    SET url.start = u.start,'
+            '        url.end = u.end,'
+            '        url.url = u.url,'
+            '        url.expanded_url = u.expanded_url,'
+            '        url.display_url = u.display_url,'
+            '        url.media_key = u.media_key',
+            '    MERGE (tweet)-[:LINKED]->(url)',
+            ')',
+            'FOREACH (a IN t.entities.annotations |',
+            '    MERGE (annotation:Annotation {'
+            '        probability: a.probability,'
+            '        type: a.type,'
+            '        normalized_text: a.normalized_text'
+            '    })',
+            '    MERGE (tweet)-[:ANNOTATED]->(annotation)',
+            ')',
+            'FOREACH (ca IN t.context_annotations |',
+            '    MERGE (domain:Domain {id: ca.domain.id})',
+            '    SET domain = ca.domain',
+            '    MERGE (entity:Entity {id: ca.entity.id})',
+            '    SET entity = ca.entity',
+            '    MERGE (tweet)-[:INCLUDED]->(entity)',
+            '    MERGE (entity)-[:CATEGORY]->(domain)',
+            ')',
+            'FOREACH (h IN t.entities.hashtags |',
+            '    MERGE (hashtag:Hashtag {tag: h.tag})',
+            '    MERGE (tweet)-[:TAG]->(hashtag)',
+            ')',
+            'FOREACH (c IN t.entities.cashtags |',
+            '    MERGE (cashtag:Cashtag {tag: c.tag})',
+            '    MERGE (tweet)-[:TAG]->(cashtag)',
+            ')',
+            'FOREACH (a IN t.attachments |',
+            '    FOREACH (media_key in a.media_keys |',
+            '        MERGE (media:Media {media_key: media_key})',
+            '        MERGE (tweet)-[:ATTACHED]->(media)',
+            '    )',
+            ')',
+            'FOREACH (r IN t.referenced_tweets |',
+            '    MERGE (ref_t:Tweet {id: r.id})',
+            '    MERGE (tweet)-[:REFERENCED{type:r.type}]->(ref_t)',
+            ')',
+            'RETURN tweet',
+        ]),
+        tweets=tweet_list,
+    )
+    for record in results:
+        tweet_node = record['tweet']
+        LOGGER.debug(
+            'added tweet: id=%s, text=%s',
+            tweet_node['id'],
+            tweet_node.get('text', ''),
+        )
+
+
+def add_tweets_from(driver: Driver, tweet_list: Iterable[Any]):
+    """Adds given tweet objects to the graph database.
+    """
+    LOGGER.debug('adding tweets: %s', tweet_list)
+    with driver.session() as session:
+        session.execute_write(
+            functools.partial(write_tweets_from, tweet_list=tweet_list),
         )
 
 
@@ -776,6 +877,15 @@ def index_all_streams(
                     neo4j_driver,
                     [flatten_twitter_media_properties(m)
                         for m in tweets_page.included_media],
+                )
+                add_tweets_from(
+                    neo4j_driver,
+                    [flatten_tweet_properties(t)
+                        for t in tweets_page.included_tweets],
+                )
+                add_tweets_from(
+                    neo4j_driver,
+                    [flatten_tweet_properties(t) for t in tweets_page.tweets],
                 )
             # TODO: update the indexed tweet range of the seed account
 
