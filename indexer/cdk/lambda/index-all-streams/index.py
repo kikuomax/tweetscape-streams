@@ -494,6 +494,20 @@ class TweetsRange:
         return self._earliest_tweet_id
 
 
+def flatten_key_value_pairs(
+    obj: Dict[str, Any],
+    property_name: str,
+) -> Dict[str, Any]:
+    """Flattens a specified property of a given object.
+
+    This function modifies ``obj``.
+    """
+    for key, value in obj[property_name].items():
+        obj[f'{property_name}.{key}'] = value
+    del obj[property_name]
+    return obj
+
+
 def flatten_twitter_account_properties(
     account: Dict[str, Any],
 ) -> Dict[str, Any]:
@@ -502,12 +516,20 @@ def flatten_twitter_account_properties(
     This function modifies ``account``.
     """
     account['username'] = account['username'].lower()
-    for key, value in account['public_metrics'].items():
-        account[f'public_metrics.{key}'] = value
-    del account['public_metrics']
+    flatten_key_value_pairs(account, 'public_metrics')
     if 'entities' in account:
         del account['entities']
     return account
+
+
+def flatten_twitter_media_properties(media: Dict[str, Any]) -> Dict[str, Any]:
+    """Flattens properties of a given Twitter media object.
+
+    This function modifies ``media``.
+    """
+    if 'public_metrics' in media:
+        flatten_key_value_pairs(media, 'public_metrics')
+    return media
 
 
 def read_all_streams(tx: Transaction) -> List[Stream]:
@@ -575,6 +597,37 @@ def add_twitter_accounts(driver: Driver, accounts: Iterable[Any]):
     with driver.session() as session:
         session.execute_write(
             functools.partial(write_twitter_accounts, accounts=accounts),
+        )
+
+
+def write_media(tx: Transaction, media_list: Iterable[Any]):
+    """Writes given media objects to the graph database.
+    """
+    results = tx.run(
+        '\n'.join([
+            'UNWIND $media AS m',
+            'MERGE (mediaNode:Media {media_key: m.media_key})',
+            'SET mediaNode = m',
+            'RETURN mediaNode',
+        ]),
+        media=media_list,
+    )
+    for record in results:
+        media_node = record['mediaNode']
+        LOGGER.debug(
+            'added media: key=%s, type=%s',
+            media_node['media_key'],
+            media_node['type'],
+        )
+
+
+def add_media(driver: Driver, media_list: Iterable[Any]):
+    """Adds given media objects to the graph database.
+    """
+    LOGGER.debug('adding media: %s', media_list)
+    with driver.session() as session:
+        session.execute_write(
+            functools.partial(write_media, media_list=media_list),
         )
 
 
@@ -712,13 +765,18 @@ def index_all_streams(
                 )
             )
             # processes tweets and included objects
+            # TODO: make them async
             for tweets_page in tweets_range:
                 add_twitter_accounts(
                     neo4j_driver,
                     [flatten_twitter_account_properties(a)
                         for a in tweets_page.included_users],
                 )
-                # TODO: process media, and tweets
+                add_media(
+                    neo4j_driver,
+                    [flatten_twitter_media_properties(m)
+                        for m in tweets_page.included_media],
+                )
             # TODO: update the indexed tweet range of the seed account
 
 
