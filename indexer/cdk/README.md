@@ -98,6 +98,12 @@ Although the [documentation on Fly.io explains how to do this](https://fly.io/do
 So I decided to deploy a PostgreSQL instance from [this template (`fly-apps/postgres-standalone`)](https://github.com/fly-apps/postgres-standalone).
 Securing connection to the PostgreSQL database is another issue.
 
+### Periodically running Indexer
+
+This CDK stack provisions an [Amazon EventBridge](https://aws.amazon.com/eventbridge/) rule that runs Indexer every 15 minutes.
+The rule is disabled by default.
+Please turn it on if you want to schedule Indexer.
+
 ## Running locally
 
 You can locally run Indexer.
