@@ -943,6 +943,7 @@ def index_all_streams(
             # processes tweets and included objects
             # TODO: make them async
             updated = False
+            # TODO: token may expire in the following loop
             for tweets_page in tweets_range:
                 add_twitter_accounts(
                     neo4j_driver,
