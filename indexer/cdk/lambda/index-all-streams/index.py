@@ -477,28 +477,36 @@ class TweetsRange:
         self.exhausted = True
 
     @property
-    def latest_tweet_id(self) -> Optional[str]:
+    def latest_tweet_id(self) -> str:
         """Latest tweet ID.
 
-        ``None`` if no page was given.
-
-        :raises AttributeError: if the iteration over tweets has not done yet.
+        :raises AttributeError: if the iteration over tweets has not done yet,
+        or if no page was given.
         """
         if not self.exhausted:
             raise AttributeError('tweet iteration has not done yet!')
-        return self._latest_tweet_id
+        latest_tweet_id = self._latest_tweet_id
+        if latest_tweet_id is None:
+            raise AttributeError(
+                'latest tweet ID is not available because no page was given',
+            )
+        return latest_tweet_id
 
     @property
-    def earliest_tweet_id(self) -> Optional[str]:
+    def earliest_tweet_id(self) -> str:
         """Earliest tweet ID.
 
-        ``None`` if no page was given.
-
-        :raises AttributeError: if the iteration over tweets has not done yet.
+        :raises AttributeError: if the iteration over tweets has not done yet,
+        or if no page was given.
         """
         if not self.exhausted:
             raise AttributeError('tweet iteration has not done yet!')
-        return self._earliest_tweet_id
+        earliest_tweet_id = self.earliest_tweet_id
+        if earliest_tweet_id is None:
+            raise AttributeError(
+                'earliest tweet ID is not available because no page was given',
+            )
+        return earliest_tweet_id
 
 
 def flatten_key_value_pairs(
@@ -791,6 +799,7 @@ def update_latest_indexed_tweet_id(
     database.
     """
     LOGGER.debug('updating indexed tweet ID of %s', account.username)
+    assert account.earliest_tweet_id is not None
     with driver.session() as session:
         session.execute_write(
             functools.partial(
@@ -904,6 +913,62 @@ def get_latest_tweets(twitter: Twarc2, account: SeedAccount) -> TweetsRange:
     )
 
 
+def index_latest_tweets_from(
+    twitter: Twarc2,
+    neo4j_driver: Driver,
+    account: SeedAccount,
+):
+    """Indexes the latest tweets from a given seed account.
+
+    :raises request.exceptions.HTTPError: If there is an error to access the
+    Twitter API.
+    """
+    tweets_range = get_latest_tweets(twitter, account)
+    # processes tweets and included objects
+    # TODO: make them async
+    updated = False
+    for tweets_page in tweets_range:
+        add_twitter_accounts(
+            neo4j_driver,
+            [flatten_twitter_account_properties(a)
+                for a in tweets_page.included_users],
+        )
+        add_media(
+            neo4j_driver,
+            [flatten_twitter_media_properties(m)
+                for m in tweets_page.included_media],
+        )
+        add_tweets_from(
+            neo4j_driver,
+            [flatten_tweet_properties(t)
+                for t in tweets_page.included_tweets],
+        )
+        add_tweets_from(
+            neo4j_driver,
+            [flatten_tweet_properties(t) for t in tweets_page.tweets],
+        )
+        updated = True
+    # updates the indexed tweet range of the seed account
+    if updated:
+        if account.earliest_tweet_id is None:
+            # resets the full range
+            reset_indexed_tweet_ids(
+                neo4j_driver,
+                account=account,
+                latest_tweet_id=tweets_range.latest_tweet_id,
+                earliest_tweet_id=tweets_range.earliest_tweet_id,
+            )
+        else:
+            # updates only the latest
+            update_latest_indexed_tweet_id(
+                neo4j_driver,
+                account,
+                tweets_range.latest_tweet_id,
+            )
+    else:
+        LOGGER.debug('no newer tweets from %s', account.username)
+
+
 def index_all_streams(
     neo4j_driver: Driver,
     postgres,
@@ -934,56 +999,13 @@ def index_all_streams(
         # TODO: de-duplicate seed accounts
         for seed_account in stream.seed_accounts:
             LOGGER.debug('getting latest tweets from %s', seed_account.username)
-            tweets_range = twitter.execute_with_retry_if_unauthorized(
+            twitter.execute_with_retry_if_unauthorized(
                 functools.partial(
-                    get_latest_tweets,
+                    index_latest_tweets_from,
+                    neo4j_driver=neo4j_driver,
                     account=seed_account,
-                )
+                ),
             )
-            # processes tweets and included objects
-            # TODO: make them async
-            updated = False
-            # TODO: token may expire in the following loop
-            for tweets_page in tweets_range:
-                add_twitter_accounts(
-                    neo4j_driver,
-                    [flatten_twitter_account_properties(a)
-                        for a in tweets_page.included_users],
-                )
-                add_media(
-                    neo4j_driver,
-                    [flatten_twitter_media_properties(m)
-                        for m in tweets_page.included_media],
-                )
-                add_tweets_from(
-                    neo4j_driver,
-                    [flatten_tweet_properties(t)
-                        for t in tweets_page.included_tweets],
-                )
-                add_tweets_from(
-                    neo4j_driver,
-                    [flatten_tweet_properties(t) for t in tweets_page.tweets],
-                )
-                updated = True
-            # updates the indexed tweet range of the seed account
-            if updated:
-                if seed_account.earliest_tweet_id is None:
-                    # resets the full range
-                    reset_indexed_tweet_ids(
-                        neo4j_driver,
-                        account=seed_account,
-                        latest_tweet_id=tweets_range.latest_tweet_id,
-                        earliest_tweet_id=tweets_range.earliest_tweet_id,
-                    )
-                else:
-                    # updates only the latest
-                    update_latest_indexed_tweet_id(
-                        neo4j_driver,
-                        seed_account,
-                        tweets_range.latest_tweet_id,
-                    )
-            else:
-                LOGGER.debug('no newer tweets from %s', seed_account.username)
 
 
 def get_neo4j_parameters() -> Tuple[str, Tuple[str, str]]:
