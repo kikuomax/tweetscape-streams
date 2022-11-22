@@ -501,7 +501,7 @@ class TweetsRange:
         """
         if not self.exhausted:
             raise AttributeError('tweet iteration has not done yet!')
-        earliest_tweet_id = self.earliest_tweet_id
+        earliest_tweet_id = self._earliest_tweet_id
         if earliest_tweet_id is None:
             raise AttributeError(
                 'earliest tweet ID is not available because no page was given',
