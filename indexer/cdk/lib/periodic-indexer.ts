@@ -12,6 +12,8 @@ import {
     PythonLayerVersion,
 } from '@aws-cdk/aws-lambda-python-alpha';
 
+import { Psycopg2LambdaLayer } from 'psycopg2-lambda-layer';
+
 import type { DeploymentStage } from './deployment-stage';
 import type { ExternalResources } from './external-resources';
 
@@ -54,19 +56,11 @@ export class PeriodicIndexer extends Construct {
             },
         );
 
-        // TODO: build psycopg2 from the source code
-        // currently, the `psycopg2` folder contains binary I manually built.
-        // however, we can automate the build process.
-        const psycopg2Layer = new lambda.LayerVersion(
-            this,
-            'Psycopg2Layer',
-            {
-                description: 'psycopg2 built for Amazon Linux 2 (ARM64)',
-                code: lambda.Code.fromAsset(path.join('lambda', 'psycopg2')),
-                compatibleRuntimes: [lambda.Runtime.PYTHON_3_8],
-                compatibleArchitectures: [lambda.Architecture.ARM_64],
-            },
-        );
+        const psycopg2Layer = new Psycopg2LambdaLayer(this, 'Psycopg2Layer', {
+            description: 'psycopg2 built for Amazon Linux 2 (ARM64)',
+            runtime: lambda.Runtime.PYTHON_3_8,
+            architecture: lambda.Architecture.ARM_64,
+        });
 
         const indexAllStreamsLambda = new PythonFunction(
             this,
