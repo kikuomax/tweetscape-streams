@@ -24,6 +24,7 @@
   "dependencies": {
     "aws-cdk-lib": "2.50.0",
     "constructs": "^10.0.0",
+    "psycopg2-lambda-layer": "github:codemonger-io/psycopg2-lambda-layer#v0.1.0",
     "source-map-support": "^0.5.21"
   }
 }
