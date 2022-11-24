@@ -106,7 +106,7 @@
 9. The `app` tells the `user` the `account` is being processed.
 10. The `account addition workflow` fetches the information on the `task` from the `task database`.
 11. The `account addition workflow` adds the `account` to the `stream`.
-    - [Subscenario: Adding a single account to a stream](#subscenario-creating-a-single-account)
+    - [Subscenario: Adding a single account to a stream](#subscenario-adding-a-single-account-to-a-stream)
 12. The `account addition workflow` marks the `task` "done" in the `task database`.
 13. `Indexer` tells the `app` the `task` has done.
     - TBC: a [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) connection between the `app` and `Indexer` is supposed.
