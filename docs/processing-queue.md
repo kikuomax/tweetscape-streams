@@ -1,6 +1,6 @@
 # Processing queue
 
-## Scenario: Processing an arbitary set of accounts
+## Scenario: Processing an arbitary set of Twitter accounts
 
 1. A person (`seeder`) wants to process tweets from an arbitrary set of Twitter `accounts`.
 2. The `seeder` asks `Indexer` to process the `accounts`.
@@ -26,20 +26,21 @@
 **Given**:
 - A `seeder` who requested the processing.
     - TBC: the `seeder` is supposed to donate the rate limit.
-- A `account` to be processed.
-- A `account processing workflow` to process the `account`.
+- An `account` to be processed.
+- An `account processing workflow` to process the `account`.
 
 1. The `account processing workflow` obtains the Twitter `access token` of the `seeder` from the `tweetscape user database`.
     - `tweetscape user database`: PostgreSQL database
 2. The `account processing workflow` obtains the information of the `account` from Twitter.
-3. The `account processing workflow` creates a new `Account` node for the `account` in the `graph database`.
+    - Twitter access is authenticated with the `access token`.
+3. The `account processing workflow` creates/updates an `Account` node for the `account` in the `graph database`.
 4. The `account processing workflow` pulls the latest `tweets` of the `account` from Twitter.
     - Twitter access is authenticated with the `access token`.
-5. The `account processing workflow` creates `Account` nodes for the accounts in the `tweets` in the `graph database`.
-6. The `account processing workflow` creates `Media` nodes for the media in the `tweets` in the `graph database`.
-7. The `account processing workflow` creates `Tweet` nodes for the tweets referenced in the `tweets` in the `graph database`.
+5. The `account processing workflow` creates/updates `Account` nodes for the accounts in the `tweets` in the `graph database`.
+6. The `account processing workflow` creates/updates `Media` nodes for the media in the `tweets` in the `graph database`.
+7. The `account processing workflow` creates/updates `Tweet` nodes for the tweets referenced in the `tweets` in the `graph database`.
     - While making relationships\* between the `Tweet` nodes and related nodes.
-8. The `account processing workflow` creates `Tweet` nodes for the `tweets` in the `graph database`.
+8. The `account processing workflow` creates/updates `Tweet` nodes for the `tweets` in the `graph database`.
     - While making relationships\* between the `Tweet` nodes and related nodes.
 9. The `account processing workflow` updates the indexed tweet range of the `account` in the `graph database`.
 
@@ -60,7 +61,16 @@
 - Step 2 fails because the Twitter rate limit has been reached.
 
 1. The `account processing workflow` waits for 15 minutes.
-2. The `account processing workflow` starts over the subscenario from Step 1.
+2. The `account processing workflow` resumes the subscenario from Step 2.
+
+#### Exception-2-B: Expired access token
+
+**Condition**:
+- Step 2 fails because the Twitter access token has expired.
+
+1. The `account processing workflow` asks Twitter to refresh the `access token`.
+2. Twitter returns a new `access token`.
+3. The `account processing workflow` resumes the subscenario from Step 2.
 
 #### Exception-4-A: Exceeding the Twitter rate limit
 
@@ -68,4 +78,159 @@
 - Step 4 fails because the Twitter rate limit has been reached.
 
 1. The `account processing workflow` waits for 15 minutes.
-2. The `account processing workflow` starts over the subscenario from Step 1.
+2. The `account processing workflow` resumes the subscenario from Step 4.
+
+#### Exception-4-B: Expired access token
+
+**Condition**:
+- Step 4 fails because the Twitter access token has expired.
+
+1. The `account processing workflow` asks Twitter to refresh the `access token`.
+2. Twitter returns a new `access token`.
+3. The `account processing workflow` resumes the subscenario from Step 4.
+
+## Scenario: Adding a seed Twitter account to a stream
+
+![Adding a seed account](./queue-adding-a-seed-user.png)
+
+1. A Tweetscape Stream `user` wants to add a Twitter `account` to a `stream`.
+    - The `user` created the `stream` before.
+2. The `user` asks `Tweetscape Stream` (the `app`) to add the `account` to the `stream`.
+3. The `app` asks `Indexer` to process the `account`.
+4. `Indexer` creates a new `task` that adds the `account` to the `stream`.
+5. `Indexer` puts the `task` into the `task database`.
+    - While marking the `task` "pending".
+6. `Indexer` marks the `task` "processing" in the `task database`.
+7. `Indexer` triggers a workflow (`account addition workflow`) to process the `task`.
+8. `Indexer` tells the `app` the ID (`task ID`) of the `task`.
+9. The `app` tells the `user` the `account` is being processed.
+10. The `account addition workflow` fetches the information on the `task` from the `task database`.
+11. The `account addition workflow` adds the `account` to the `stream`.
+    - [Subscenario: Adding a single account to a stream](#subscenario-creating-a-single-account)
+12. The `account addition workflow` marks the `task` "done" in the `task database`.
+13. `Indexer` tells the `app` the `task` has done.
+    - TBC: a [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) connection between the `app` and `Indexer` is supposed.
+14. The `app` tells the `user` the `account` has been added to the `stream`.
+    - TBC: a [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) connection between the `user` (user's browser) and `app` is supposed.
+
+### Subscenario: Adding a single account to a stream
+
+**Given**:
+- A `user` who requested the processing and offered the rate limit.
+- An `account` to be added.
+- A `stream` to add the `account`.
+- An `account addition workflow` to add the `account`.
+
+1. The `account addition workflow` obtains the `Stream` node of the `stream` from the `graph database`.
+2. The `account addition workflow` obtains the Twitter `access token` of the `user` from the `tweetscape user database`.
+    - `tweetscape user database`: PostgreSQL database
+3. The `account addition workflow` obtains the information on the `account` from Twitter.
+    - Twitter access is authenticated with the `access token`.
+4. The `account addition workflow` creates/updates an `Account` node for the `account` in the `graph database`.
+5. The `account addition workflow` adds a `CONTAINS` relationship from the `Stream` node to the `Account` node.
+6. The `account addition workflow` adds the `account` to the Twitter list associated with the `Stream` node.
+    - Twitter access is authenticated with the `access token`.
+7. The `account addition workflow` pulls the latest `tweets` of the `account` from Twitter.
+    - Twitter access is authenticated with the `access token`.
+8. The `account addition workflow` creates/updates `Account` nodes for the accounts in the `tweets` in the `graph database`.
+9. The `account addition workflow` creates/updates `Media` nodes for the media in the `tweets` in the `graph database`.
+10. The `account addition workflow` creates/updates `Tweet` nodes for the tweets referenced in the `tweets` in the `graph database`.
+    - While making relationships\* between the `Tweet` nodes and related nodes.
+11. The `account addition workflow` creates/updates `Tweet` nodes for the `tweets` in the `graph database`.
+    - While making relationships\* between the `Tweet` nodes and related nodes.
+12. The `account addition workflow` updates the indexed tweet range of the `account` in the `graph database`.
+13. The `account addition workflow` obtains Twitter accounts whom the `account` is following (`followed accounts`) from Twitter.
+    - Twitter access is authenticated with the `access token`.
+14. The `account addition workflow` creates/updates Account (`followed Account`) nodes for the `followed accounts` in the `graph database`.
+15. The `account addition workflow` adds `FOLLOWS` relationships from the `Account` node to the `followed Account` nodes in the `graph database`.
+
+\* Relationships include the following,
+- `POSTED`: `Account` &rightarrow; `Tweet`
+- `MENTIONED`: `Tweet` &rightarrow; `Account`
+- `LINKED`: `Tweet` &rightarrow; `Link`
+- `ANNOTATED`: `Tweet` &rightarrow; `Annotation`
+- `CATEGORY`: `Tweet` &rightarrow; `Domain`
+- `INCLUDED`: `Tweet` &rightarrow; `Entity`
+- `TAG`: `Tweet` &rightarrow; `Hashtag` or `Cashtag`
+- `ATTACHED`: `Tweet` &rightarrow; `Media`
+- `REFERENCED`: `Tweet` &rightarrow; `Tweet`
+
+#### Exception-3-A: Exceeding the Twitter rate limit
+
+**Condition**:
+- Step 3 fails because the Twitter rate limit has been reached.
+
+1. The `account addition workflow` tells `Indexer` the Twitter rate limit holds the `task` back.
+2. The `account addition workflow` waits for 15 mintues.
+3. The `account addition workflow` resumes the subscenario from Step 3.
+
+TBC: Or should we immediately fail?
+
+#### Exception-3-B: Expired access token
+
+**Condition**:
+- Step 3 fails because the Twitter access token has expired.
+
+1. The `account addition workflow` asks Twitter to refresh the `access token`.
+2. Twitter returns a new `access token`.
+3. The `account addition workflow` resumes the subscenario from Step 3.
+
+#### Exception-6-A: Exceeding the Twitter rate limit
+
+**Condition**:
+- Step 6 fails because the Twitter rate limit has been reached.
+
+1. The `account addition workflow` tells `Indexer` the Twitter rate limit holds the `task` back.
+2. The `account addition workflow` waits for 15 minutes.
+3. The `account addition workflow` resumes the subscenario from Step 6.
+
+TBC: Or should we immediately fail?
+
+#### Exception-6-B: Expired access token
+
+**Condition**:
+- Step 6 fails because the Twitter access token has expired.
+
+1. The `account addition workflow` asks Twitter to refresh the `access token`.
+2. Twitter returns a new `access token`.
+3. The `account addition workflow` resumes the subscenario from Step 6.
+
+#### Exception-7-A: Exceeding the Twitter rate limit
+
+**Condition**:
+- Step 7 fails because the Twitter rate limit has been reached.
+
+1. The `account addition workflow` tells `Indexer` the Twitter rate limit holds the `task` back.
+2. The `account addition workflow` waits for 15 minutes.
+3. The `account addition workflow` resumes the subscenario from Step 7.
+
+TBC: Or should we immediately fail?
+
+#### Exception-7-B: Expired access token
+
+**Condition**:
+- Step 7 fails because the Twitter access token has expired.
+
+1. The `account addition workflow` asks Twitter to refresh the `access token`.
+2. Twitter returns a new `access token`.
+3. The `account addition workflow` resumes the subscenario from Step 7.
+
+#### Exception-13-A: Exceeding the Twitter rate limit
+
+**Condition**:
+- Step 13 fails because the Twitter rate limit has been reached.
+
+1. The `account addition workflow` tells `Indexer` the Twitter rate limit holds the `task` back.
+2. The `account addition workflow` waits for 15 minutes.
+3. The `account addition workflow` resumes the subscenario from Step 13.
+
+TBC: Or should we immediately fail?
+
+#### Exception-13-B: Expired access token
+
+**Condition**:
+- Step 13 fails because the Twitter access token has expired.
+
+1. The `account addition workflow` asks Twitter to refresh the `access token`.
+2. Twitter returns a new `access token`.
+3. The `account addition workflow` resumes the subscenario from Step 13.
