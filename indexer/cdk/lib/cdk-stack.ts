@@ -3,6 +3,7 @@ import { Construct } from 'constructs';
 
 import type { DeploymentStage } from './deployment-stage';
 import { ExternalResources } from './external-resources';
+import { IndexerDependencies } from './indexer-dependencies';
 import { PeriodicIndexer } from './periodic-indexer';
 
 interface Props extends cdk.StackProps {
@@ -23,12 +24,17 @@ export class CdkStack extends cdk.Stack {
                 deploymentStage,
             },
         );
+        const indexerDependencies = new IndexerDependencies(
+            this,
+            'IndexerDependencies',
+        );
         const periodicIndexer = new PeriodicIndexer(
             this,
             'PeriodicIndexer',
             {
                 deploymentStage,
                 externalResources,
+                indexerDependencies,
             },
         );
     }

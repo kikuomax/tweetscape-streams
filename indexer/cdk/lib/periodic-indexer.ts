@@ -7,21 +7,19 @@ import {
     aws_sns as sns,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import {
-    PythonFunction,
-    PythonLayerVersion,
-} from '@aws-cdk/aws-lambda-python-alpha';
-
-import { Psycopg2LambdaLayer } from 'psycopg2-lambda-layer';
+import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 
 import type { DeploymentStage } from './deployment-stage';
 import type { ExternalResources } from './external-resources';
+import type { IndexerDependencies } from './indexer-dependencies';
 
 interface Props {
     /** Deployment stage. */
-    deploymentStage: DeploymentStage;
+    readonly deploymentStage: DeploymentStage;
     /** External resources. */
-    externalResources: ExternalResources;
+    readonly externalResources: ExternalResources;
+    /** Dependencies of Indexer. */
+    readonly indexerDependencies: IndexerDependencies;
 }
 
 /** CDK construct that provisions resources for a periodic Indexer. */
@@ -31,35 +29,12 @@ export class PeriodicIndexer extends Construct {
 
         const { deploymentStage } = props;
         const { databaseCredentials } = props.externalResources;
+        const { commonPackages, psycopg2 } = props.indexerDependencies;
 
         // TODO: reuse the following SNS topic and SQS queue if necessary
         // SNS topic that receives dead letters
         const deadLetterTopic = new sns.Topic(this, 'DeadLetterTopic', {
             displayName: `Dead-letter topic (${deploymentStage})`,
-        });
-
-        // dependencies of Indexer
-        const dependenciesLayer = new PythonLayerVersion(
-            this,
-            'DependenciesLayer',
-            {
-                description: 'Layer of Indexer dependencies',
-                entry: path.join('lambda', 'indexer-dependencies'),
-                compatibleRuntimes: [
-                    lambda.Runtime.PYTHON_3_8,
-                    lambda.Runtime.PYTHON_3_9,
-                ],
-                compatibleArchitectures: [
-                    lambda.Architecture.ARM_64,
-                    lambda.Architecture.X86_64,
-                ],
-            },
-        );
-
-        const psycopg2Layer = new Psycopg2LambdaLayer(this, 'Psycopg2Layer', {
-            description: 'psycopg2 built for Amazon Linux 2 (ARM64)',
-            runtime: lambda.Runtime.PYTHON_3_8,
-            architecture: lambda.Architecture.ARM_64,
         });
 
         const indexAllStreamsLambda = new PythonFunction(
@@ -72,7 +47,7 @@ export class PeriodicIndexer extends Construct {
                 architecture: lambda.Architecture.ARM_64,
                 index: 'index.py',
                 handler: 'lambda_handler',
-                layers: [dependenciesLayer, psycopg2Layer],
+                layers: [commonPackages, psycopg2],
                 environment: {
                     NEO4J_SECRET_ARN: databaseCredentials.secretArn,
                     POSTGRES_SECRET_ARN: databaseCredentials.secretArn,
