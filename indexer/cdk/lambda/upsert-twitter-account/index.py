@@ -8,14 +8,15 @@ environment variables,
   credentials for external services: neo4j, PostgreSQL, and Twitter.
 """
 
-import contextlib
 import functools
-import json
 import logging
 import os
-from typing import Any, Dict, Generator, Tuple
+from typing import Any, Dict, Tuple
 from libindexer import (
     AccountTwarc2,
+    ExternalCredentialError,
+    ExternalCredentials,
+    connect_neo4j_and_postgres,
     flatten_twitter_account_properties,
     get_twitter_access_token,
     save_twitter_access_token,
@@ -23,132 +24,11 @@ from libindexer import (
 )
 import boto3
 import neo4j # type: ignore
-import psycopg2
 from twarc import Twarc2 # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.DEBUG)
-
-
-class ExternalCredentials:
-    """Caches credentials for external services.
-    """
-    secret_arn: str
-    credentials: Dict[str, str]
-
-    def __init__(self, s3_secrets, secret_arn: str):
-        """Initializes with the ARN of a secret containing the credentials.
-
-        Loads the credentials from the secret.
-
-        :param boto3.SecretsManager.Client s3_secrets: client of AWS
-        SecretsManager to access the secret credentials.
-
-        :param str secret_arn: ARN of the secret that keeps credentials.
-        """
-        self.s3_secrets = s3_secrets
-        self.secret_arn = secret_arn
-        self.refresh()
-
-    def refresh(self):
-        """Refreshes (reloads) the credentials from the secret.
-        """
-        res = self.s3_secrets.get_secret_value(SecretId=self.secret_arn)
-        # TODO: handle errors
-        self.credentials = json.loads(res['SecretString'])
-
-    @property
-    def neo4j_uri(self) -> str:
-        """URI of the neo4j database.
-        """
-        return self.credentials['neo4jUri']
-
-    @property
-    def neo4j_cred(self) -> Tuple[str, str]:
-        """Credential to connect to the neo4j database.
-
-        Tuple of the username and password.
-        """
-        return (
-            self.credentials['neo4jUsername'],
-            self.credentials['neo4jPassword'],
-        )
-
-    @property
-    def postgres_uri(self) -> str:
-        """URI of the PostgreSQL database.
-
-        Contains the username and password.
-        """
-        return self.credentials['postgresUri']
-
-    @property
-    def twitter_client_cred(self) -> Tuple[str, str]:
-        """Credential of the Twitter client app.
-
-        Tuple of the client ID and secret.
-        """
-        return (
-            self.credentials['clientId'],
-            self.credentials['clientSecret'],
-        )
-
-
-class ExternalCredentialError(Exception):
-    """Error raised when an error has occurred around external credentials.
-    """
-    def __init__(self, message: str):
-        """Initializes with a message.
-        """
-        self.message = message
-
-    def __str__(self):
-        typename = type(self).__name__
-        return f'{typename}("{self.message}")'
-
-    def __repr__(self):
-        typename = type(self).__name__
-        return f'{typename}({repr(self.message)})'
-
-
-@contextlib.contextmanager
-def neo4j_and_postgres(credentials) -> Generator[
-    Tuple[neo4j.Driver, Any],
-    None,
-    None,
-]:
-    """Connects to neo4j, PostgreSQL, and Twitter.
-
-    Call this function in a ``with`` context.
-
-    :returns: tuple of neo4j.Driver and PostgreSQL connection.
-    """
-    try:
-        LOGGER.debug('connecting to neo4j')
-        neo4j_driver = neo4j.GraphDatabase.driver(
-            credentials.neo4j_uri,
-            auth=credentials.neo4j_cred,
-        )
-    except neo4j.exceptions.AuthError as exc:
-        LOGGER.warning('neo4j connection error: %s', exc)
-        raise ExternalCredentialError('failed to connect to neo4j') from exc
-    else:
-        try:
-            LOGGER.debug('connecting to PostgreSQL')
-            postgres = psycopg2.connect(credentials.postgres_uri)
-        except psycopg2.Error as exc:
-            LOGGER.warning('psycopg2 connection error: %s', exc)
-            raise ExternalCredentialError('failed to connect to PostgreSQL') from exc
-        else:
-            try:
-                yield neo4j_driver, postgres
-            finally:
-                LOGGER.debug('disconnecting from PostgreSQL')
-                postgres.close()
-        finally:
-            LOGGER.debug('disconnecting from neo4j')
-            neo4j_driver.close()
 
 
 # loads credentials for external services
@@ -280,7 +160,10 @@ def lambda_handler(event, _context):
     twitter_username = event['twitterUsernameToAdd']
     LOGGER.debug('upserting a Twitter account: %s', twitter_username)
     try:
-        with neo4j_and_postgres(EXTERNAL_CREDENTIALS) as (neo4j_driver, postgres):
+        with connect_neo4j_and_postgres(EXTERNAL_CREDENTIALS) as (
+            neo4j_driver,
+            postgres,
+        ):
             upsert_twitter_account(
                 neo4j_driver,
                 postgres,
@@ -293,7 +176,10 @@ def lambda_handler(event, _context):
         LOGGER.debug('refreshing external credentials')
         EXTERNAL_CREDENTIALS.refresh()
         LOGGER.debug('retrying')
-        with neo4j_and_postgres(EXTERNAL_CREDENTIALS) as (neo4j_driver, postgres):
+        with connect_neo4j_and_postgres(EXTERNAL_CREDENTIALS) as (
+            neo4j_driver,
+            postgres,
+        ):
             upsert_twitter_account(
                 neo4j_driver,
                 postgres,
