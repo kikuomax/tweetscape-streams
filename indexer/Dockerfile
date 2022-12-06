@@ -6,7 +6,8 @@ RUN mkdir /var/run/indexer
 WORKDIR /var/run/indexer
 
 COPY cdk/lambda/indexer-dependencies ./indexer-dependencies/
-RUN python3 -m pip install -r indexer-dependencies/requirements.txt python-dotenv psycopg2-binary
+COPY cdk/lambda/libindexer ./libindexer
+RUN python3 -m pip install -r indexer-dependencies/requirements.txt ./libindexer python-dotenv psycopg2-binary
 
 COPY cdk/lambda/index-all-streams ./index-all-streams/
 
