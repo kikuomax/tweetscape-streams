@@ -33,10 +33,18 @@ import itertools
 import json
 import logging
 import os
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+import libindexer
+from libindexer import (
+    AccountTwarc2,
+    TwitterAccount,
+    flatten_twitter_account_properties,
+    get_twitter_access_token,
+    save_twitter_access_token,
+)
 from neo4j import Driver, GraphDatabase, Transaction # type: ignore
 import psycopg2
-import requests
+# import requests
 from twarc import Twarc2 # type: ignore
 
 
@@ -126,44 +134,6 @@ if __name__ != '__main__':
     secrets = boto3.client('secretsmanager')
 
 
-class TwitterAccount:
-    """Twitter account.
-    """
-    account_id: str
-    username: str
-
-    def __init__(self, account_id: str, username: str):
-        """Initializes with ID and name.
-        """
-        self.account_id = account_id
-        self.username = username
-
-    @staticmethod
-    def parse_node(node: Dict[str, Any]):
-        """Parses a given neo4j node.
-        """
-        return TwitterAccount(
-            account_id=node['id'],
-            username=node['username'],
-        )
-
-    def __str__(self):
-        return (
-            'TwitterAccount('
-            f'account_id={self.account_id}, '
-            f'username={self.username}'
-            ')'
-        )
-
-    def __repr__(self):
-        return (
-            'TwitterAccount('
-            f'account_id={repr(self.account_id)}, '
-            f'username={repr(self.username)}'
-            ')'
-        )
-
-
 class SeedAccount(TwitterAccount):
     """Seed Twitter account.
     """
@@ -251,151 +221,6 @@ class Stream:
             f'seed_accounts={repr(self.seed_accounts)}'
             ')'
         )
-
-
-class Token:
-    """Token associated with a Twitter account.
-    """
-    account_id: str
-    access_token: str
-    refresh_token: str
-
-    def __init__(
-        self,
-        account_id: str,
-        access_token: str,
-        refresh_token: str,
-        created_at,
-        updated_at,
-        expires_in,
-    ):
-        """Initializes with token values.
-        """
-        self.account_id = account_id
-        self.access_token = access_token
-        self.refresh_token = refresh_token
-        self.created_at = created_at
-        self.updated_at = updated_at
-        self.expires_in = expires_in
-
-    def __str__(self):
-        return (
-            'Token('
-            f'account_id={self.account_id}, '
-            f'access_token={self.access_token[:8]}..., '
-            f'refresh_token={self.refresh_token[:8]}..., '
-            f'created_at={self.created_at}, '
-            f'updated_at={self.updated_at}, '
-            f'expires_in={self.expires_in}'
-            ')'
-        )
-
-    def __repr__(self):
-        return (
-            'Token('
-            f'account_id={repr(self.account_id)}, '
-            f'access_token={repr(self.access_token[:8] + "...")}, '
-            f'refresh_token={repr(self.refresh_token[:8] + "...")}, '
-            f'created_at={repr(self.created_at)}, '
-            f'updated_at={repr(self.updated_at)}, '
-            f'expires_in={repr(self.expires_in)}'
-            ')'
-        )
-
-
-class AccountTwarc2:
-    """Container of a ``Twarc2`` instance that makes requests on behalf of a
-    Twitter account.
-    """
-    client_id: str
-    client_secret: str
-    token: Token
-    on_token_refreshed: Optional[Callable[[Token], None]]
-    api: Twarc2
-
-    def __init__(
-        self,
-        client_id: str,
-        client_secret: str,
-        token: Token,
-        on_token_refreshed: Optional[Callable[[Token], None]] = None,
-    ):
-        """Initializes with a given token.
-
-        :param str client_id: Twitter app client ID.
-
-        :param str client_secret: Twitter app client secret.
-
-        :param Token token: initial token.
-
-        :param Callable[[Token], None]? on_token_refreshed: optional function
-        that is called when the token is refreshed. You can use this function
-        to save the new token.
-        """
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.token = token
-        self.on_token_refreshed = on_token_refreshed
-        self.api = Twarc2(bearer_token=token.access_token)
-
-    def execute_with_retry_if_unauthorized(self, func: Callable[[Twarc2], Any]):
-        """Runs a given function with a retry when the request is not
-        authorized.
-        """
-        try:
-            return func(self.api)
-        except requests.exceptions.HTTPError as exc:
-            if exc.response.status_code == 401:
-                # refreshes the access token and retries
-                LOGGER.debug('refreshing token')
-                try:
-                    self.refresh_tokens()
-                except requests.exceptions.HTTPError as exc2:
-                    if exc2.response.status_code == 400:
-                        # refresh token may be out of sync
-                        LOGGER.warning(
-                            'refresh token may be out of sync. you have to'
-                            ' reset tokens by logging in to the'
-                            ' tweetscape-streams app on a browser',
-                        )
-                    raise
-                else:
-                    LOGGER.debug('retrying with token: %s', self.token)
-                    self.api = Twarc2(bearer_token=self.token.access_token)
-                    return func(self.api)
-            raise
-
-    def refresh_tokens(self):
-        """Refreshes the Twitter account tokens.
-
-        :raise requests.exceptions.HTTPError: if the update of the Twitter
-        account tokens has failed.
-        """
-        client = requests.Session()
-        client.headers.update({
-            'Content-Type': 'application/x-www-form-urlencoded',
-        })
-        res = client.post(
-            'https://api.twitter.com/2/oauth2/token',
-            {
-                'refresh_token': self.token.refresh_token,
-                'grant_type': 'refresh_token',
-                'client_id': self.client_id,
-            },
-            auth=(self.client_id, self.client_secret), # basic authentication
-        )
-        res.raise_for_status()
-        token_json = res.json()
-        self.token = Token(
-            self.token.account_id,
-            token_json['access_token'],
-            token_json['refresh_token'],
-            self.token.created_at,
-            self.token.updated_at, # TODO: set the current time (format matters?)
-            token_json['expires_in'],
-        )
-        if self.on_token_refreshed:
-            self.on_token_refreshed(self.token)
 
 
 class TweetsPage:
@@ -509,41 +334,13 @@ class TweetsRange:
         return earliest_tweet_id
 
 
-def flatten_key_value_pairs(
-    obj: Dict[str, Any],
-    property_name: str,
-) -> Dict[str, Any]:
-    """Flattens a specified property of a given object.
-
-    This function modifies ``obj``.
-    """
-    for key, value in obj[property_name].items():
-        obj[f'{property_name}.{key}'] = value
-    del obj[property_name]
-    return obj
-
-
-def flatten_twitter_account_properties(
-    account: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Flattens properties of a given Twitter account object.
-
-    This function modifies ``account``.
-    """
-    account['username'] = account['username'].lower()
-    flatten_key_value_pairs(account, 'public_metrics')
-    if 'entities' in account:
-        del account['entities']
-    return account
-
-
 def flatten_twitter_media_properties(media: Dict[str, Any]) -> Dict[str, Any]:
     """Flattens properties of a given Twitter media object.
 
     This function modifies ``media``.
     """
     if 'public_metrics' in media:
-        flatten_key_value_pairs(media, 'public_metrics')
+        libindexer.twitter.flatten_key_value_pairs(media, 'public_metrics')
     return media
 
 
@@ -552,7 +349,7 @@ def flatten_tweet_properties(tweet: Dict[str, Any]) -> Dict[str, Any]:
 
     This function modifies ``tweet``.
     """
-    return flatten_key_value_pairs(tweet, 'public_metrics')
+    return libindexer.twitter.flatten_key_value_pairs(tweet, 'public_metrics')
 
 
 def read_all_streams(tx: Transaction) -> List[Stream]:
@@ -811,57 +608,6 @@ def update_latest_indexed_tweet_id(
         )
 
 
-def get_twitter_account_token(postgres, account: TwitterAccount) -> Token:
-    """Queries the token of a given Twitter account.
-    """
-    with postgres.cursor() as curs:
-        curs.execute(
-            'SELECT'
-            '  user_id,'
-            '  access_token,'
-            '  refresh_token,'
-            '  created_at,'
-            '  updated_at,'
-            '  expires_in'
-            ' FROM tokens'
-            ' WHERE user_id = %(account_id)s',
-            {
-                'account_id': account.account_id,
-            },
-        )
-        record = curs.fetchone()
-        return Token(
-            record[0],
-            record[1],
-            record[2],
-            record[3],
-            record[4],
-            record[5],
-        )
-
-
-def save_twitter_account_token(postgres, token: Token):
-    """Saves a given token in the database.
-    """
-    LOGGER.debug('saving Twitter account token: %s', token)
-    with postgres.cursor() as curs:
-        curs.execute(
-            'UPDATE tokens'
-            ' SET'
-            '  access_token = %(access_token)s,'
-            '  refresh_token = %(refresh_token)s,'
-            '  expires_in = %(expires_in)s'
-            ' WHERE user_id = %(account_id)s',
-            {
-                'access_token': token.access_token,
-                'refresh_token': token.refresh_token,
-                'expires_in': token.expires_in,
-                'account_id': token.account_id,
-            },
-        )
-        postgres.commit() # TODO: is this necessary?
-
-
 def pull_tweets(
     twitter: Twarc2,
     account_id: str,
@@ -987,14 +733,12 @@ def index_all_streams(
     # how about to randomly choose streams?
     for stream in streams:
         LOGGER.debug('processing stream: %s', stream)
-        token = get_twitter_account_token(postgres, stream.creator)
+        token = get_twitter_access_token(postgres, stream.creator.account_id)
         LOGGER.debug("using token: %s", token)
-        client_id, client_secret = twitter_cred
         twitter = AccountTwarc2(
-            client_id,
-            client_secret,
+            twitter_cred,
             token,
-            functools.partial(save_twitter_account_token, postgres)
+            functools.partial(save_twitter_access_token, postgres=postgres)
         )
         # TODO: de-duplicate seed accounts
         for seed_account in stream.seed_accounts:

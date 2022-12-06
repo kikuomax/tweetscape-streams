@@ -3,7 +3,7 @@
 """Common code resued in Indexer components.
 """
 
-from .graph import upsert_twitter_account_node
+from .graph import TwitterAccount, upsert_twitter_account_node
 from .twitter import (
     AccountTwarc2,
     flatten_twitter_account_properties,

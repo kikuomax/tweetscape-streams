@@ -29,7 +29,11 @@ export class PeriodicIndexer extends Construct {
 
         const { deploymentStage } = props;
         const { databaseCredentials } = props.externalResources;
-        const { commonPackages, psycopg2 } = props.indexerDependencies;
+        const {
+            commonPackages,
+            libIndexer,
+            psycopg2,
+        } = props.indexerDependencies;
 
         // TODO: reuse the following SNS topic and SQS queue if necessary
         // SNS topic that receives dead letters
@@ -47,7 +51,7 @@ export class PeriodicIndexer extends Construct {
                 architecture: lambda.Architecture.ARM_64,
                 index: 'index.py',
                 handler: 'lambda_handler',
-                layers: [commonPackages, psycopg2],
+                layers: [commonPackages, libIndexer, psycopg2],
                 environment: {
                     NEO4J_SECRET_ARN: databaseCredentials.secretArn,
                     POSTGRES_SECRET_ARN: databaseCredentials.secretArn,
