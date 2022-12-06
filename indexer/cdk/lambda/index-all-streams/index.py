@@ -738,7 +738,7 @@ def index_all_streams(
         twitter = AccountTwarc2(
             twitter_cred,
             token,
-            functools.partial(save_twitter_access_token, postgres=postgres)
+            functools.partial(save_twitter_access_token, postgres)
         )
         # TODO: de-duplicate seed accounts
         for seed_account in stream.seed_accounts:
