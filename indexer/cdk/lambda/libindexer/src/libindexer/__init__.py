@@ -3,6 +3,11 @@
 """Common code resued in Indexer components.
 """
 
+from .external_services import (
+    ExternalCredentialError,
+    ExternalCredentials,
+    connect_neo4j_and_postgres,
+)
 from .graph import TwitterAccount, upsert_twitter_account_node
 from .twitter import (
     AccountTwarc2,
