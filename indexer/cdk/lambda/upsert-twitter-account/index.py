@@ -239,14 +239,10 @@ def upsert_twitter_account(
     token = get_twitter_access_token(postgres, requester_id)
     LOGGER.debug('using token: %s', token)
     # prepares Twitter API
-    def save_twitter_access_token_with_logging(new_token):
-        # TODO: remove this function when logging is no longer necessary
-        LOGGER.debug('saving refreshed token: %s', new_token)
-        save_twitter_access_token(postgres, new_token)
     twitter = AccountTwarc2(
         twitter_client_cred,
         token,
-        save_twitter_access_token_with_logging,
+        functools.partial(save_twitter_access_token, postgres),
     )
     # obtains the Twitter account information
     account_info = twitter.execute_with_retry_if_unauthorized(
