@@ -108,10 +108,10 @@
 11. The `account addition workflow` adds the `account` to the `stream`.
     - [Subscenario: Adding a single account to a stream](#subscenario-adding-a-single-account-to-a-stream)
 12. The `account addition workflow` marks the `task` "done" in the `task database`.
-13. `Indexer` tells the `app` the `task` has done.
-    - TBC: a [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) connection between the `app` and `Indexer` is supposed.
-14. The `app` tells the `user` the `account` has been added to the `stream`.
-    - TBC: a [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API) connection between the `user` (user's browser) and `app` is supposed.
+13. The `app` asks `Indexer` whether the `task` has done.
+    - See [Subscenario: Asking if the task has done](#subscenario-asking-if-the-task-has-done) for about polling.
+14. `Indexer` tells the `app` the `task` has done.
+15. The `app` tells the `user` the `account` has been added to the `stream`.
 
 ### Subscenario: Adding a single account to a stream
 
@@ -161,7 +161,7 @@
 - Step 3 fails because the Twitter rate limit has been reached.
 
 1. The `account addition workflow` tells `Indexer` the Twitter rate limit holds the `task` back.
-2. The `account addition workflow` waits for 15 mintues.
+2. The `account addition workflow` waits until the Twitter rate limit is lifted.
 3. The `account addition workflow` resumes the subscenario from Step 3.
 
 TBC: Or should we immediately fail?
@@ -181,7 +181,7 @@ TBC: Or should we immediately fail?
 - Step 6 fails because the Twitter rate limit has been reached.
 
 1. The `account addition workflow` tells `Indexer` the Twitter rate limit holds the `task` back.
-2. The `account addition workflow` waits for 15 minutes.
+2. The `account addition workflow` waits until the Twitter rate limit is lifted.
 3. The `account addition workflow` resumes the subscenario from Step 6.
 
 TBC: Or should we immediately fail?
@@ -201,7 +201,7 @@ TBC: Or should we immediately fail?
 - Step 7 fails because the Twitter rate limit has been reached.
 
 1. The `account addition workflow` tells `Indexer` the Twitter rate limit holds the `task` back.
-2. The `account addition workflow` waits for 15 minutes.
+2. The `account addition workflow` waits until the Twitter rate limit is lifted.
 3. The `account addition workflow` resumes the subscenario from Step 7.
 
 TBC: Or should we immediately fail?
@@ -221,7 +221,7 @@ TBC: Or should we immediately fail?
 - Step 13 fails because the Twitter rate limit has been reached.
 
 1. The `account addition workflow` tells `Indexer` the Twitter rate limit holds the `task` back.
-2. The `account addition workflow` waits for 15 minutes.
+2. The `account addition workflow` waits until the Twitter rate limit is lifted.
 3. The `account addition workflow` resumes the subscenario from Step 13.
 
 TBC: Or should we immediately fail?
@@ -234,3 +234,17 @@ TBC: Or should we immediately fail?
 1. The `account addition workflow` asks Twitter to refresh the `access token`.
 2. Twitter returns a new `access token`.
 3. The `account addition workflow` resumes the subscenario from Step 13.
+
+### Subscenario: Asking if the task has done
+
+**Given**:
+- A `user` who requested the processing.
+- An `account` to be added.
+- A `task` running.
+
+**When**:
+- In Steps 8 to 11 of the main scenario; i.e., the `task` has started but not done.
+
+1. The `app` asks `Indexer` if the `task` has done.
+2. `Indexer` tells the `app` the `task` has not done.
+3. The `app` tells the `user` the processing of `account` is going on.
