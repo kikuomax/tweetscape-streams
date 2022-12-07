@@ -33,10 +33,10 @@ LOGGER.setLevel(logging.DEBUG)
 
 # loads credentials for external services
 if __name__ != '__main__':
-    secrets = boto3.client('secretsmanager')
+    aws_secrets = boto3.client('secretsmanager')
     EXTERNAL_CREDENTIALS_ARN = os.environ['EXTERNAL_CREDENTIALS_ARN']
     EXTERNAL_CREDENTIALS = ExternalCredentials(
-        secrets,
+        aws_secrets,
         EXTERNAL_CREDENTIALS_ARN,
     )
 
@@ -155,11 +155,11 @@ def lambda_handler(event, _context):
             'twitterUsernameToAdd': '<twitter-username>'
         }
     """
-    global EXTERNAL_CREDENTIALS
     requester_id = event['requesterId']
     twitter_username = event['twitterUsernameToAdd']
     LOGGER.debug('upserting a Twitter account: %s', twitter_username)
-    try:
+    # uses an internal function to simplify retry
+    def run():
         with connect_neo4j_and_postgres(EXTERNAL_CREDENTIALS) as (
             neo4j_driver,
             postgres,
@@ -171,19 +171,10 @@ def lambda_handler(event, _context):
                 requester_id,
                 twitter_username,
             )
+    try:
+        run()
     except ExternalCredentialError:
-        # refreshes the credentials and retries
+        # refreshes the cached credentials and retries
         LOGGER.debug('refreshing external credentials')
         EXTERNAL_CREDENTIALS.refresh()
-        LOGGER.debug('retrying')
-        with connect_neo4j_and_postgres(EXTERNAL_CREDENTIALS) as (
-            neo4j_driver,
-            postgres,
-        ):
-            upsert_twitter_account(
-                neo4j_driver,
-                postgres,
-                EXTERNAL_CREDENTIALS.twitter_client_cred,
-                requester_id,
-                twitter_username,
-            )
+        run()
