@@ -4,12 +4,8 @@
 
 You have to specify the following environment variables if you run this function
 on AWS,
-* ``NEO4J_SECRET_ARN``: ARN of the SecretsManager Secret containing neo4j
-  connection parameters.
-* ``POSTGRES_SECRET_ARN``: ARN of the SecretsManager Secret containing
-  PostgreSQL connection parameters.
-* ``TWITTER_SECRET_ARN``: ARN of the SecretsManager Secret containing Twitter
-  credentials.
+* ``EXTERNAL_CREDENTIALS_ARN``: ARN of the SecretsManager secret containing
+  credentials for external services.
 
 If you run this function locally, you need the following environment variables
 instead,
@@ -30,21 +26,22 @@ You can specify the following optional environment variable,
 
 import functools
 import itertools
-import json
 import logging
 import os
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import libindexer
 from libindexer import (
     AccountTwarc2,
+    ExternalCredentialError,
+    ExternalCredentials,
     TwitterAccount,
+    connect_neo4j_and_postgres,
     flatten_twitter_account_properties,
     get_twitter_access_token,
     save_twitter_access_token,
 )
 from neo4j import Driver, GraphDatabase, Transaction # type: ignore
 import psycopg2
-# import requests
 from twarc import Twarc2 # type: ignore
 
 
@@ -131,7 +128,12 @@ TIMELINE_PARAMETERS = {
 
 if __name__ != '__main__':
     import boto3
-    secrets = boto3.client('secretsmanager')
+    s3_secrets = boto3.client('secretsmanager')
+    EXTERNAL_CREDENTIALS_ARN = os.environ['EXTERNAL_CREDENTIALS_ARN']
+    EXTERNAL_CREDENTIALS = ExternalCredentials(
+        s3_secrets,
+        EXTERNAL_CREDENTIALS_ARN,
+    )
 
 
 class SeedAccount(TwitterAccount):
@@ -727,6 +729,7 @@ def index_all_streams(
     :param Tuple[str,str] twitter_cred: A tuple of Twitter app client ID and
     secret.
     """
+    LOGGER.debug('fetching all streams')
     streams = fetch_streams(neo4j_driver)
     # TODO: handle rate limit.
     # and we should equally distribute rate limit to streams.
@@ -752,65 +755,28 @@ def index_all_streams(
             )
 
 
-def get_neo4j_parameters() -> Tuple[str, Tuple[str, str]]:
-    """Returns connection parameters for the neo4j database.
-
-    :return: tuple of a neo4j URI and credential.
-    A credential is a tuple of a username and password.
-    """
-    neo4j_secret_arn = os.environ['NEO4J_SECRET_ARN']
-    res = secrets.get_secret_value(SecretId=neo4j_secret_arn)
-    parsed = json.loads(res['SecretString'])
-    neo4j_uri = str(parsed['neo4jUri'])
-    neo4j_username = str(parsed['neo4jUsername'])
-    neo4j_password = str(parsed['neo4jPassword'])
-    return neo4j_uri, (neo4j_username, neo4j_password)
-
-
-def get_postgres_uri() -> str:
-    """Returns the connection URI for the PostgreSQL database.
-    """
-    postgres_secret_arn = os.environ['POSTGRES_SECRET_ARN']
-    res = secrets.get_secret_value(SecretId=postgres_secret_arn)
-    parsed = json.loads(res['SecretString'])
-    postgres_uri = str(parsed['postgresUri'])
-    return postgres_uri
-
-
-def get_twitter_credential() -> Tuple[str, str]:
-    """Returns the credential for Twitter.
-    """
-    twitter_secret_arn = os.environ['TWITTER_SECRET_ARN']
-    res = secrets.get_secret_value(SecretId=twitter_secret_arn)
-    parsed = json.loads(res['SecretString'])
-    client_id = str(parsed['clientId'])
-    client_secret = str(parsed['clientSecret'])
-    return client_id, client_secret
-
-
 def lambda_handler(_event, _context):
     """Runs as a Lambda function.
     """
     LOGGER.debug('running Lambda')
-    neo4j_uri, neo4j_cred = get_neo4j_parameters()
-    postgres_uri = get_postgres_uri()
-    twitter_cred = get_twitter_credential()
-    LOGGER.debug(
-        'connecting to neo4j: URI=%s, username=%s, password=%s',
-        neo4j_uri,
-        neo4j_cred[0],
-        (neo4j_cred[1] and '****') or 'None',
-    )
-    neo4j_driver = GraphDatabase.driver(neo4j_uri, auth=neo4j_cred)
+    # calls the following internal function to simplify retry
+    def run():
+        with connect_neo4j_and_postgres(EXTERNAL_CREDENTIALS) as (
+            neo4j_driver,
+            postgres,
+        ):
+            index_all_streams(
+                neo4j_driver,
+                postgres,
+                EXTERNAL_CREDENTIALS.twitter_client_cred,
+            )
     try:
-        LOGGER.debug('connecting to PostgreSQL')
-        postgres = psycopg2.connect(postgres_uri)
-        try:
-            index_all_streams(neo4j_driver, postgres, twitter_cred)
-        finally:
-            postgres.close()
-    finally:
-        neo4j_driver.close()
+        run()
+    except ExternalCredentialError:
+        # invalidates the cached credentials and retries
+        LOGGER.debug('refreshing external credentials')
+        EXTERNAL_CREDENTIALS.refresh()
+        run()
 
 
 def run_local():

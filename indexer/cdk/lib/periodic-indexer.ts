@@ -53,9 +53,7 @@ export class PeriodicIndexer extends Construct {
                 handler: 'lambda_handler',
                 layers: [commonPackages, libIndexer, psycopg2],
                 environment: {
-                    NEO4J_SECRET_ARN: databaseCredentials.secretArn,
-                    POSTGRES_SECRET_ARN: databaseCredentials.secretArn,
-                    TWITTER_SECRET_ARN: databaseCredentials.secretArn,
+                    EXTERNAL_CREDENTIALS_ARN: databaseCredentials.secretArn,
                 },
                 memorySize: 256,
                 timeout: Duration.minutes(15),
