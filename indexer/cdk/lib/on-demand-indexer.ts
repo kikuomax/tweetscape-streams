@@ -48,5 +48,26 @@ export class OnDemandIndexer extends Construct {
             },
         );
         databaseCredentials.grantRead(upsertTwitterAccountLambda);
+        // - adds a seed Twitter account to a stream.
+        //   also adds the account to the corresponding Twitter list.
+        const addSeedAccountToStreamLambda = new PythonFunction(
+            this,
+            'AddSeedAccountToStreamLambda',
+            {
+                description: 'Adds a seed account to a stream',
+                architecture: lambda.Architecture.ARM_64,
+                runtime: lambda.Runtime.PYTHON_3_8,
+                entry: path.join('lambda', 'add-seed-account-to-stream'),
+                index: 'index.py',
+                handler: 'lambda_handler',
+                layers: [commonPackages, libIndexer, psycopg2],
+                environment: {
+                    EXTERNAL_CREDENTIALS_ARN: databaseCredentials.secretArn,
+                },
+                memorySize: 256,
+                timeout: Duration.minutes(3),
+            },
+        );
+        databaseCredentials.grantRead(addSeedAccountToStreamLambda);
     }
 }
