@@ -128,10 +128,10 @@ TIMELINE_PARAMETERS = {
 
 if __name__ != '__main__':
     import boto3
-    s3_secrets = boto3.client('secretsmanager')
+    aws_secrets = boto3.client('secretsmanager')
     EXTERNAL_CREDENTIALS_ARN = os.environ['EXTERNAL_CREDENTIALS_ARN']
     EXTERNAL_CREDENTIALS = ExternalCredentials(
-        s3_secrets,
+        aws_secrets,
         EXTERNAL_CREDENTIALS_ARN,
     )
 
