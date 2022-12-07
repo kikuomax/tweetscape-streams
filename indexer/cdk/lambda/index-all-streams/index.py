@@ -34,6 +34,7 @@ from libindexer import (
     AccountTwarc2,
     ExternalCredentialError,
     ExternalCredentials,
+    SeedAccount,
     TwitterAccount,
     connect_neo4j_and_postgres,
     flatten_twitter_account_properties,
@@ -134,55 +135,6 @@ if __name__ != '__main__':
         aws_secrets,
         EXTERNAL_CREDENTIALS_ARN,
     )
-
-
-class SeedAccount(TwitterAccount):
-    """Seed Twitter account.
-    """
-    latestTweetId: Optional[str]
-    earliestTweetId: Optional[str]
-
-    def __init__(
-        self,
-        account: TwitterAccount,
-        latest_tweet_id: Optional[str],
-        earliest_tweet_id: Optional[str],
-    ):
-        """Initializes with seed account attributes.
-        """
-        super().__init__(account.account_id, account.username)
-        self.latest_tweet_id = latest_tweet_id
-        self.earliest_tweet_id = earliest_tweet_id
-
-    @staticmethod
-    def parse_node(node: Dict[str, Any]):
-        """Parses a given neo4j node.
-        """
-        return SeedAccount(
-            account=TwitterAccount.parse_node(node),
-            latest_tweet_id=node.get('latestTweetId'),
-            earliest_tweet_id=node.get('earliestTweetId'),
-        )
-
-    def __str__(self):
-        return (
-            'SeedAccount('
-            f'account_id={self.account_id}, '
-            f'username={self.username}, '
-            f'latest_tweet_id={self.latest_tweet_id}, '
-            f'earliest_tweet_id={self.earliest_tweet_id}'
-            ')'
-        )
-
-    def __repr__(self):
-        return (
-            'SeedAccount('
-            f'account_id={repr(self.account_id)}, '
-            f'username={repr(self.username)}, '
-            f'latest_tweet_id={repr(self.latest_tweet_id)}, '
-            f'earliest_tweet_id={repr(self.earliest_tweet_id)}'
-            ')'
-        )
 
 
 class Stream:

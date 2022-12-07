@@ -9,6 +9,7 @@ from .external_services import (
     connect_neo4j_and_postgres,
 )
 from .graph import (
+    SeedAccount,
     TwitterAccount,
     add_seed_account_to_stream_node,
     get_stream_node_by_name,
