@@ -1,6 +1,11 @@
 import * as path from 'path';
 
-import { Duration, aws_lambda as lambda } from 'aws-cdk-lib';
+import {
+    Duration,
+    aws_lambda as lambda,
+    aws_stepfunctions as sfn,
+    aws_stepfunctions_tasks as sfntasks,
+} from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 
@@ -16,6 +21,27 @@ interface Props {
 
 /** CDK construct that provisions resources for the on-demand Indexer. */
 export class OnDemandIndexer extends Construct {
+    /** Lambda function that upserts a Twitter account. */
+    private upsertTwitterAccountLambda: lambda.IFunction;
+    /** Lambda function that adds a seed Twitter account to a stream. */
+    private addSeedAccountToStreamLambda: lambda.IFunction;
+    /**
+     * Workflow (state machine) to add a seed Twitter account to a stream.
+     *
+     * @remarks
+     *
+     * You have to provide an input similar to the following,
+     *
+     * ```js
+     * {
+     *   requesterId: '<requester-id>',
+     *   streamName: '<stream-name>',
+     *   twitterUsername: '<twitter-username>'
+     * }
+     * ```
+     */
+    readonly addSeedAccountToStreamWorkflow: sfn.IStateMachine;
+
     constructor(scope: Construct, id: string, props: Props) {
         super(scope, id);
 
@@ -26,10 +52,10 @@ export class OnDemandIndexer extends Construct {
             psycopg2,
         } = props.indexerDependencies;
 
-        // Lambda functions
+        // Lambda functions as building blocks
         // - obtains the information on a Twitter account and
         //   upserts an Account node on the graph database
-        const upsertTwitterAccountLambda = new PythonFunction(
+        this.upsertTwitterAccountLambda = new PythonFunction(
             this,
             'UpsertTwitterAccountLambda',
             {
@@ -47,10 +73,10 @@ export class OnDemandIndexer extends Construct {
                 timeout: Duration.minutes(3),
             },
         );
-        databaseCredentials.grantRead(upsertTwitterAccountLambda);
+        databaseCredentials.grantRead(this.upsertTwitterAccountLambda);
         // - adds a seed Twitter account to a stream.
         //   also adds the account to the corresponding Twitter list.
-        const addSeedAccountToStreamLambda = new PythonFunction(
+        this.addSeedAccountToStreamLambda = new PythonFunction(
             this,
             'AddSeedAccountToStreamLambda',
             {
@@ -68,6 +94,54 @@ export class OnDemandIndexer extends Construct {
                 timeout: Duration.minutes(3),
             },
         );
-        databaseCredentials.grantRead(addSeedAccountToStreamLambda);
+        databaseCredentials.grantRead(this.addSeedAccountToStreamLambda);
+
+        // creates the workflow to add a seed Twitter account to a stream
+        this.addSeedAccountToStreamWorkflow =
+            this.createAddSeedAccountToStreamWorkflow();
+    }
+
+    /** Creates a workflow to add a seed Twitter account to a stream. */
+    private createAddSeedAccountToStreamWorkflow(): sfn.StateMachine {
+        // creates states
+        // - invokes UpsertTwitterAccountLambda
+        const invokeUpsertTwitterAccount = new sfntasks.LambdaInvoke(
+            this,
+            'InvokeUpsertTwitterAccount',
+            {
+                lambdaFunction: this.upsertTwitterAccountLambda,
+                comment: 'Upserts a given Tiwtter account',
+                payloadResponseOnly: true,
+                resultSelector: {
+                    'requesterId.$': '$$.Execution.Input.requesterId',
+                    'streamName.$': '$$.Execution.Input.streamName',
+                    'seedAccountId.$': '$.accountId',
+                },
+                resultPath: '$',
+                timeout: Duration.minutes(5),
+            },
+        );
+        // - invokes AddSeedAccountToStreamLambda
+        const invokeAddSeedAccountToStream = new sfntasks.LambdaInvoke(
+            this,
+            'InvokeAddSeedAccountToStream',
+            {
+                lambdaFunction: this.addSeedAccountToStreamLambda,
+                comment: 'Adds a given Twitter account to a stream',
+                payloadResponseOnly: true,
+                timeout: Duration.minutes(5),
+            },
+        );
+
+        // chains states
+        return new sfn.StateMachine(
+            this,
+            'AddSeedAccountToStreamWorkflow',
+            {
+                definition: invokeUpsertTwitterAccount
+                    .next(invokeAddSeedAccountToStream),
+                timeout: Duration.hours(1),
+            },
+        );
     }
 }
