@@ -140,7 +140,7 @@ def upsert_twitter_account(
                 account=account_info,
             ),
         )
-        LOGGER.debug('upserted account node: %s', account_node)
+        return account_node
 
 
 def lambda_handler(event, _context):
@@ -152,11 +152,19 @@ def lambda_handler(event, _context):
 
         {
             'requesterId': '<requester-id>',
-            'twitterUsernameToAdd': '<twitter-username>'
+            'twitterUsername': '<twitter-username>'
+        }
+
+    Returns a ``dict`` similar to the following,
+
+    .. code-block:: python
+
+        {
+            'accountId': '<twitter-account-id>'
         }
     """
     requester_id = event['requesterId']
-    twitter_username = event['twitterUsernameToAdd']
+    twitter_username = event['twitterUsername']
     LOGGER.debug('upserting a Twitter account: %s', twitter_username)
     # uses an internal function to simplify retry
     def run():
@@ -164,7 +172,7 @@ def lambda_handler(event, _context):
             neo4j_driver,
             postgres,
         ):
-            upsert_twitter_account(
+            return upsert_twitter_account(
                 neo4j_driver,
                 postgres,
                 EXTERNAL_CREDENTIALS.twitter_client_cred,
@@ -172,9 +180,14 @@ def lambda_handler(event, _context):
                 twitter_username,
             )
     try:
-        run()
+        account_node = run()
     except ExternalCredentialError:
         # refreshes the cached credentials and retries
         LOGGER.debug('refreshing external credentials')
         EXTERNAL_CREDENTIALS.refresh()
-        run()
+        account_node = run()
+    else:
+        LOGGER.debug('upserted account node: %s', account_node)
+        return {
+            'accountId': account_node.account_id,
+        }
