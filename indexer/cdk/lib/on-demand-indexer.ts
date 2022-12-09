@@ -151,7 +151,20 @@ export class OnDemandIndexer extends Construct {
                 lambdaFunction: this.addSeedAccountToStreamLambda,
                 comment: 'Adds a given Twitter account to a stream',
                 payloadResponseOnly: true,
+                resultPath: sfn.JsonPath.DISCARD,
                 timeout: Duration.minutes(5),
+            },
+        );
+        // - invokes IndexTweetsFromAccountLambda
+        const invokeIndexTweetsFromAccount = new sfntasks.LambdaInvoke(
+            this,
+            'InvokeIndexTweetsFromAccount',
+            {
+                lambdaFunction: this.indexTweetsFromAccountLambda,
+                comment: 'Indexes tweets from a given Twitter account',
+                payloadResponseOnly: true,
+                resultPath: sfn.JsonPath.DISCARD,
+                timeout: Duration.minutes(20),
             },
         );
 
@@ -161,7 +174,8 @@ export class OnDemandIndexer extends Construct {
             'AddSeedAccountToStreamWorkflow',
             {
                 definition: invokeUpsertTwitterAccount
-                    .next(invokeAddSeedAccountToStream),
+                    .next(invokeAddSeedAccountToStream)
+                    .next(invokeIndexTweetsFromAccount),
                 timeout: Duration.hours(1),
             },
         );
