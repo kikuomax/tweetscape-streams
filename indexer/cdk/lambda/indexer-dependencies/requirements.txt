@@ -16,6 +16,7 @@ requests-oauthlib==1.3.1
 six==1.16.0
 tqdm==4.64.1
 twarc==2.12.0
+tweepy==4.12.1
 typing-extensions==4.4.0
 urllib3==1.26.12
 zipp==3.10.0
