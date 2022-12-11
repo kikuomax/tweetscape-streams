@@ -19,9 +19,9 @@ import logging
 import os
 from typing import Tuple
 from libindexer import (
-    AccountTwarc2,
     ExternalCredentialError,
     ExternalCredentials,
+    TokenSyncTweepy,
     connect_neo4j_and_postgres,
     delete_follows_relationships_from,
     get_twitter_access_token,
@@ -32,7 +32,6 @@ from libindexer import (
 )
 from libindexer.utils import chunk
 import neo4j # type: ignore
-from twarc import Twarc2 # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -54,7 +53,7 @@ if __name__ != '__main__':
 
 
 def process_twitter_accounts_followed_by(
-    twitter: Twarc2,
+    twitter: TokenSyncTweepy,
     neo4j_driver: neo4j.Driver,
     account_id: str,
 ):
@@ -98,7 +97,7 @@ def index_following(
     LOGGER.debug('obtaining access token for %s', requester_id)
     access_token = get_twitter_access_token(postgres, requester_id)
     LOGGER.debug('using access token: %s', access_token)
-    twitter = AccountTwarc2(
+    twitter = TokenSyncTweepy(
         twitter_client_cred,
         access_token,
         on_token_refreshed=functools.partial(

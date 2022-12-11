@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 import pytz
 import requests
 from twarc import Twarc2 # type: ignore
+import tweepy # type: ignore
 from .graph import SeedAccount
 
 
@@ -153,6 +154,125 @@ class AccessToken:
         )
 
 
+class TokenSyncTweepy:
+    """Container of a ``tweepy.Client`` instance that makes requests with a
+    given access token.
+    """
+    client_id: str
+    client_secret: str
+    token: AccessToken
+    on_token_refreshed: Callable[[AccessToken], None]
+    api: tweepy.Client
+
+    def __init__(
+        self,
+        client_cred: Tuple[str, str],
+        token: AccessToken,
+        on_token_refreshed: Callable[[AccessToken], None],
+    ):
+        """Initializes with a given Twitter client credential, and an access
+        token.
+
+        :param Tuple[str, str] client_cred: tuple of a Twitter client ID and
+        secret.
+
+        :param AccessToken token: initial access token.
+
+        :param Callable[[AccessToken], None] on_token_refreshed: function that
+        is called when the access token is refreshed. You can use this function
+        to save the new access token.
+        """
+        self.client_id, self.client_secret = client_cred
+        self.token = token
+        self.on_token_refreshed = on_token_refreshed
+        self.api = self._create_client()
+
+    def _create_client(self) -> tweepy.Client:
+        """Creates the tweepy client.
+
+        The return type of the tweepy client is ``requests.Response`` to avoid
+        too much dependence on a specific Twitter client.
+        """
+        return tweepy.Client(
+            bearer_token=self.token.access_token,
+            return_type=requests.Response,
+            wait_on_rate_limit=False, # makes sure fails on rate limit
+        )
+
+    def execute_with_retry_if_unauthorized(
+        self,
+        func: Callable[[tweepy.Client], Any],
+    ):
+        """Runs a given function with a retry.
+
+        If ``func`` fails with 401 (unauthorized) status code, this function
+        refreshes the access token and calls ``func`` again.
+        Retries only once.
+
+        :param Callable[[tweepy.Client], Any] func: function to access the
+        Twitter API. An instance of ``tweepy.Client`` with the access token is
+        supplied.
+
+        :returns: any value returned from ``func``.
+        """
+        try:
+            return func(self.api)
+        except requests.exceptions.HTTPError as exc:
+            if exc.response.status_code == 401:
+                # refreshes the access token and retries
+                try:
+                    self.refresh_access_token()
+                except requests.exceptions.HTTPError as exc2:
+                    if exc2.response.status_code == 400:
+                        # refresh token may be out of sync
+                        # TODO: raise specific exception
+                        print(
+                            'refresh token may be out of sync. you have to'
+                            ' reset tokens by logging in to the'
+                            ' tweetscape-streams app on a browser',
+                        )
+                    raise
+                else:
+                    return func(self.api)
+            raise
+
+    def refresh_access_token(self):
+        """Refreshes the Twitter access token.
+
+        Updates also the refresh token.
+
+        Updates also the Twarc2 instance.
+
+        :raises requests.exception.HTTPError: if there is an error with the
+        Twitter API access.
+        """
+        client = requests.Session()
+        client.headers.update({
+            'Content-Type': 'application/x-www-form-urlencoded',
+        })
+        res = client.post(
+            'https://api.twitter.com/2/oauth2/token',
+            {
+                'refresh_token': self.token.refresh_token,
+                'grant_type': 'refresh_token',
+                'client_id': self.client_id,
+            },
+            auth=(self.client_id, self.client_secret), # basic authentication
+        )
+        res.raise_for_status()
+        token_json = res.json()
+        self.token = AccessToken(
+            self.token.account_id,
+            token_json['access_token'],
+            token_json['refresh_token'],
+            self.token.created_at,
+            current_time_string(),
+            token_json['expires_in'],
+        )
+        self.api = self._create_client()
+        self.on_token_refreshed(self.token)
+
+
 class AccountTwarc2:
     """Container of a ``Twarc2`` instance that makes requests on behalf of a
     given Twitter account.
@@ -177,7 +297,7 @@ class AccountTwarc2:
 
         :param AccessToken token: initial access token.
 
-        :param Callable[[AccessToken], None]? on_token_refreshed: function that
+        :param Callable[[AccessToken], None] on_token_refreshed: function that
         is called when the access token is refreshed. You can use this function
         to save the new access token.
         """
@@ -381,6 +501,38 @@ class TweetsRange:
         return earliest_tweet_id
 
 
+# should we use tweepy.Paginator?
+def paginate_tweepy_endpoint(
+    endpoint: Callable[..., requests.Response],
+) -> Callable[..., Iterable[Dict[str, Any]]]:
+    """Makes a given tweepy endpoint support pagination.
+
+    Supposes the return type of the tweepy client is ``requests.Response``.
+
+    :params Callable[[Any], requests.Response] endpoint: endpoint function of a
+    ``tweepy.Client``. Should accept ``pagination_token``.
+
+    :returns: function that paginates a call to ``endpoint``. Forwards every
+    parameter to ``endpoint`` except for ``pagination_token``. Raises an
+    ``HTTPError`` when there is an error with a call to the Twitter API.
+    """
+    def paginated(*args, **kwargs):
+        next_page_token = None
+        while True:
+            res = endpoint(
+                *args,
+                **kwargs,
+                pagination_token=next_page_token,
+            )
+            res.raise_for_status()
+            results = res.json()
+            next_page_token = results['meta'].get('next_token')
+            yield results
+            if next_page_token is None:
+                break
+    return paginated
+
+
 def get_twitter_access_token(postgres, account_id: str) -> AccessToken:
     """Obtains the access token of a given Twitter account from the PostgreSQL
     database.
@@ -440,7 +592,7 @@ def save_twitter_access_token(postgres, token: AccessToken):
 
 
 def get_twitter_accounts_followed_by(
-    twitter: Twarc2,
+    twitter: tweepy.Client,
     account_id: str,
     page_size: int,
 ) -> Iterable[Dict[str, Any]]:
@@ -456,8 +608,10 @@ def get_twitter_accounts_followed_by(
     """
     if page_size < 1:
         raise ValueError(f'page_size must be ≥ 1 but {page_size} was given')
-    results = twitter.following(
-        user=account_id,
+    # TODO: support pagination
+    get_users_following = paginate_tweepy_endpoint(twitter.get_users_following)
+    results = get_users_following(
+        id=account_id,
         max_results=page_size,
         **FOLLOWING_PARAMETERS,
     )
