@@ -157,9 +157,13 @@ export class OnDemandIndexer extends Construct {
                 comment: 'Upserts a given Tiwtter account',
                 payloadResponseOnly: true,
                 resultSelector: {
-                    'requesterId.$': '$$.Execution.Input.requesterId',
-                    'streamName.$': '$$.Execution.Input.streamName',
-                    'seedAccountId.$': '$.accountId',
+                    requesterId: sfn.JsonPath.stringAt(
+                        '$$.Execution.Input.requesterId',
+                    ),
+                    streamName: sfn.JsonPath.stringAt(
+                        '$$.Execution.Input.streamName',
+                    ),
+                    seedAccountId: sfn.JsonPath.stringAt('$.accountId'),
                 },
                 resultPath: '$',
                 timeout: Duration.minutes(5),
@@ -189,6 +193,22 @@ export class OnDemandIndexer extends Construct {
                 timeout: Duration.minutes(20),
             },
         );
+        // - invokes IndexFollowingLambda
+        const invokeIndexFollowing = new sfntasks.LambdaInvoke(
+            this,
+            'InvokeIndexFollowing',
+            {
+                lambdaFunction: this.indexFollowingLambda,
+                comment: 'Indexes Twitter accounts followed by a specific account',
+                payloadResponseOnly: true,
+                payload: sfn.TaskInput.fromObject({
+                    requesterId: sfn.JsonPath.stringAt('$.requesterId'),
+                    accountId: sfn.JsonPath.stringAt('$.seedAccountId'),
+                }),
+                resultPath: sfn.JsonPath.DISCARD,
+                timeout: Duration.minutes(5),
+            },
+        );
 
         // chains states
         return new sfn.StateMachine(
@@ -197,7 +217,8 @@ export class OnDemandIndexer extends Construct {
             {
                 definition: invokeUpsertTwitterAccount
                     .next(invokeAddSeedAccountToStream)
-                    .next(invokeIndexTweetsFromAccount),
+                    .next(invokeIndexTweetsFromAccount)
+                    .next(invokeIndexFollowing),
                 timeout: Duration.hours(1),
             },
         );
