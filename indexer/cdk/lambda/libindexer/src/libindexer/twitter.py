@@ -94,6 +94,12 @@ TIMELINE_PARAMETERS = {
     ]),
 }
 
+# parameters given to Twarc2.following
+FOLLOWING_PARAMETERS = {
+    'tweet_fields': DEFAULT_TWEET_FIELDS,
+    'user_fields': DEFAULT_USER_FIELDS,
+}
+
 
 class AccessToken:
     """Represents an access token of a specific Twitter account.
@@ -433,6 +439,34 @@ def save_twitter_access_token(postgres, token: AccessToken):
         postgres.commit() # is this necessary?
 
 
+def get_twitter_accounts_followed_by(
+    twitter: Twarc2,
+    account_id: str,
+    page_size: int,
+) -> Iterable[Dict[str, Any]]:
+    """Obtains Twitter accounts followed by a given account.
+
+    :param int page_size: maximum number of accounts included in a singel page.
+    Must be ≥ 1.
+
+    :returns: iterator of every account followed by ``account_id``.
+
+    :raises requests.exceptions.HTTPError: if there is an error with a call to
+    the Twitter API.
+    """
+    if page_size < 1:
+        raise ValueError(f'page_size must be ≥ 1 but {page_size} was given')
+    results = twitter.following(
+        user=account_id,
+        max_results=page_size,
+        **FOLLOWING_PARAMETERS,
+    )
+    # do we want to tell individual pages?
+    for page in results:
+        for account in page['data']:
+            yield account
+
+
 def get_latest_tweets_from(
     twitter: Twarc2,
     account: SeedAccount,
@@ -443,7 +477,7 @@ def get_latest_tweets_from(
     :param int page_size: maximum number of tweets included in a single page.
     Must be ≥ 5.
 
-    :raises requests.exceptions.HTTPError: if there is an error with a call of
+    :raises requests.exceptions.HTTPError: if there is an error with a call to
     the Twitter API.
     """
     if page_size < 5:

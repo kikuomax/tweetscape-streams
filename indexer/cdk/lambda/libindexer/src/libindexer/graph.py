@@ -6,6 +6,7 @@
 import functools
 from typing import Any, Dict, Iterable, Optional
 from neo4j import Driver, Transaction # type: ignore
+from .utils import current_time_string
 
 
 class TwitterAccount:
@@ -49,20 +50,23 @@ class TwitterAccount:
 class SeedAccount(TwitterAccount):
     """Seed Twitter account.
     """
-    latestTweetId: Optional[str]
-    earliestTweetId: Optional[str]
+    latest_tweet_id: Optional[str]
+    earliest_tweet_id: Optional[str]
+    last_follows_index: Optional[str]
 
     def __init__(
         self,
         account: TwitterAccount,
         latest_tweet_id: Optional[str],
         earliest_tweet_id: Optional[str],
+        last_follows_index: Optional[str],
     ):
         """Initializes with seed account attributes.
         """
         super().__init__(account.account_id, account.username)
         self.latest_tweet_id = latest_tweet_id
         self.earliest_tweet_id = earliest_tweet_id
+        self.last_follows_index = last_follows_index
 
     @staticmethod
     def parse_node(node: Dict[str, Any]):
@@ -72,6 +76,7 @@ class SeedAccount(TwitterAccount):
             account=TwitterAccount.parse_node(node),
             latest_tweet_id=node.get('latestTweetId'),
             earliest_tweet_id=node.get('earliestTweetId'),
+            last_follows_index=node.get('lastFollowsIndex'),
         )
 
     def __str__(self):
@@ -80,7 +85,8 @@ class SeedAccount(TwitterAccount):
             f'account_id={self.account_id}, '
             f'username={self.username}, '
             f'latest_tweet_id={self.latest_tweet_id}, '
-            f'earliest_tweet_id={self.earliest_tweet_id}'
+            f'earliest_tweet_id={self.earliest_tweet_id}, '
+            f'last_follows_index={self.last_follows_index}'
             ')'
         )
 
@@ -90,7 +96,8 @@ class SeedAccount(TwitterAccount):
             f'account_id={repr(self.account_id)}, '
             f'username={repr(self.username)}, '
             f'latest_tweet_id={repr(self.latest_tweet_id)}, '
-            f'earliest_tweet_id={repr(self.earliest_tweet_id)}'
+            f'earliest_tweet_id={repr(self.earliest_tweet_id)}, '
+            f'last_follows_index={repr(self.last_follows_index)}'
             ')'
         )
 
@@ -363,6 +370,56 @@ def _upsert_twitter_account_nodes(
     return [record['account'] for record in results]
 
 
+def upsert_twitter_account_nodes_followed_by(
+    driver: Driver,
+    account_id: str,
+    followed_accounts: Iterable[Dict[str, Any]],
+) -> Iterable[TwitterAccount]:
+    """Upserts Twitter account nodes followed by a given account.
+
+    :param str account_id: ID of a Twitter account who follows
+    ``followed_accounts``.
+
+    :param Iterable[Dict[str, Any]]: Twitter accounts followed by
+    ``account_id``.
+    """
+    with driver.session() as session:
+        account_nodes = session.execute_write(
+            functools.partial(
+                _upsert_twitter_account_nodes_followed_by,
+                account_id=account_id,
+                followed_accounts=followed_accounts,
+            ),
+        )
+        return [TwitterAccount.parse_node(node) for node in account_nodes]
+
+
+def _upsert_twitter_account_nodes_followed_by(
+    tx: Transaction,
+    account_id: str,
+    followed_accounts: Iterable[Dict[str, Any]],
+) -> Iterable[Dict[str, Any]]:
+    """Upserts Twitter account nodes followed by a given account.
+    """
+    results = tx.run(
+        '\n'.join([
+            'UNWIND $followedAccounts AS followed',
+            'MATCH (account:User { id: $accountId })',
+            'MERGE (followedNode:User { id: followed.id })',
+            _cypher_fragment_copy_account_properties(
+                'followedNode',
+                'followed',
+            ),
+            'MERGE (account) -[:FOLLOWS]-> (followedNode)',
+            'RETURN followedNode',
+        ]),
+        accountId=account_id,
+        followedAccounts=followed_accounts,
+    )
+    # TODO: handle errors
+    return [record['followedNode'] for record in results]
+
+
 def _cypher_fragment_copy_account_properties(dest: str, src: str):
     """Returns a cypher fragment that copies properties of a Twitter account.
 
@@ -382,6 +439,72 @@ def _cypher_fragment_copy_account_properties(dest: str, src: str):
         f'    {dest}.`public_metrics.tweet_count` = {src}.`public_metrics.tweet_count`,'
         f'    {dest}.`public_metrics.listed_count` = {src}.`public_metrics.listed_count`'
     )
+
+
+def update_last_follows_index(driver: Driver, account_id: str) -> SeedAccount:
+    """Updates ``lastFollowsIndex`` of a given account.
+    """
+    with driver.session() as session:
+        account_node = session.execute_write(
+            functools.partial(
+                _update_last_follows_index,
+                account_id=account_id,
+            ),
+        )
+        return SeedAccount.parse_node(account_node)
+
+
+def _update_last_follows_index(
+    tx: Transaction,
+    account_id: str,
+) -> Dict[str, Any]:
+    """Updates ``lastFollowsIndex`` of a given account.
+    """
+    result = tx.run(
+        '\n'.join([
+            'MERGE (account:User {id: $accountId})',
+            'SET account.lastFollowsIndex = $lastFollowsIndex',
+            'RETURN account',
+        ]),
+        accountId=account_id,
+        lastFollowsIndex=current_time_string(),
+    )
+    # TODO: handle errors
+    # TODO: handle no account
+    return next(result)['account']
+
+
+def delete_follows_relationships_from(driver: Driver, account_id: str) -> int:
+    """Deletes all the "FOLLOWS" relationships from a given Twitter account
+    node.
+
+    :returns: number of deleted "FOLLOWS" relationships.
+    """
+    with driver.session() as session:
+        return session.execute_write(
+            functools.partial(
+                _delete_follows_relationships_from,
+                account_id=account_id,
+            ),
+        )
+
+
+def _delete_follows_relationships_from(tx: Transaction, account_id: str) -> int:
+    """Deletes all the "FOLLOWS" relationships from a given Twitter_ account
+    node.
+
+    :returns: number of deleted "FOLLOWS" relationships.
+    """
+    results = tx.run(
+        '\n'.join([
+            'MATCH (account:User {id: $accountId})-[r:FOLLOWS]->(:User)',
+            'DELETE r',
+            'RETURN count(*) AS numDeleted',
+        ]),
+        accountId=account_id,
+    )
+    # TODO: handle error
+    return next(results)['numDeleted']
 
 
 def upsert_twitter_media_nodes(
