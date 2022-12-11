@@ -27,6 +27,8 @@ export class OnDemandIndexer extends Construct {
     private addSeedAccountToStreamLambda: lambda.IFunction;
     /** Lambda function that indexes tweets from a Twitter account. */
     private indexTweetsFromAccountLambda: lambda.IFunction;
+    /** Lambda function that indexes following relationships. */
+    private indexFollowingLambda: lambda.IFunction;
     /**
      * Workflow (state machine) to add a seed Twitter account to a stream.
      *
@@ -117,6 +119,26 @@ export class OnDemandIndexer extends Construct {
             },
         );
         databaseCredentials.grantRead(this.indexTweetsFromAccountLambda);
+        // - indexes Twitter accounts whom a specific account is following
+        this.indexFollowingLambda = new PythonFunction(
+            this,
+            'IndexFollowingLambda',
+            {
+                description: 'Indexes Twitter accounts followed by a specific account',
+                architecture: lambda.Architecture.ARM_64,
+                runtime: lambda.Runtime.PYTHON_3_8,
+                entry: path.join('lambda', 'index-following'),
+                index: 'index.py',
+                handler: 'lambda_handler',
+                layers: [commonPackages, libIndexer, psycopg2],
+                environment: {
+                    EXTERNAL_CREDENTIALS_ARN: databaseCredentials.secretArn,
+                },
+                memorySize: 256,
+                timeout: Duration.minutes(3),
+            },
+        );
+        databaseCredentials.grantRead(this.indexFollowingLambda);
 
         // creates the workflow to add a seed Twitter account to a stream
         this.addSeedAccountToStreamWorkflow =
