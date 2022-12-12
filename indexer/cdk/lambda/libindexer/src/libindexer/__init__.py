@@ -27,6 +27,7 @@ from .graph import (
 )
 from .twitter import (
     AccountTwarc2,
+    RateLimitError,
     TokenSyncTweepy,
     flatten_tweet_properties,
     flatten_twitter_account_properties,

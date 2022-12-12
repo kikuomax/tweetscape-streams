@@ -10,7 +10,9 @@ import pytz
 import requests
 from twarc import Twarc2 # type: ignore
 import tweepy # type: ignore
+from .exceptions import WorkflowException
 from .graph import SeedAccount
+from .utils import unix_epoch_to_datetime
 
 
 # default tweet_fields
@@ -102,6 +104,22 @@ FOLLOWING_PARAMETERS = {
 }
 
 
+class RateLimitError(WorkflowException):
+    """Exception raised when a rate limit has been reached.
+    """
+    def __init__(self, response: requests.Response):
+        """Initializes from a given HTTP response.
+        """
+        # what if x-rate-limit-reset does not exist?
+        # TODO: how about to add a jitter?
+        rate_limit_reset = int(response.headers.get('x-rate-limit-reset', 0))
+        timestamp = unix_epoch_to_datetime(rate_limit_reset)
+        super().__init__({
+            'source': response.url,
+            'rateLimitReset': timestamp.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        })
+
+
 class AccessToken:
     """Represents an access token of a specific Twitter account.
 
@@ -157,6 +175,10 @@ class AccessToken:
 class TokenSyncTweepy:
     """Container of a ``tweepy.Client`` instance that makes requests with a
     given access token.
+
+    You should use the method ``execute_with_retry_if_unauthorized`` to access
+    the Twitter APIs whenever possible, because it handles unauthorized and
+    rate limit errors.
     """
     client_id: str
     client_secret: str
@@ -214,6 +236,8 @@ class TokenSyncTweepy:
         supplied.
 
         :returns: any value returned from ``func``.
+
+        :raises RateLimitError: if the Twitter API rate limit has been reached.
         """
         try:
             return func(self.api)
@@ -235,6 +259,9 @@ class TokenSyncTweepy:
                 else:
                     return func(self.api)
             raise
+        except tweepy.TooManyRequests as exc:
+            # rate limit has been reached
+            raise RateLimitError(exc.response) from exc
 
     def refresh_access_token(self):
         """Refreshes the Twitter access token.
