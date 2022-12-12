@@ -209,6 +209,8 @@ export class OnDemandIndexer extends Construct {
                 timeout: Duration.minutes(5),
             },
         );
+        // - handles rate limit at IndexFollowingLambda
+        this.addRateLimitRetry(invokeIndexFollowing);
 
         // chains states
         return new sfn.StateMachine(
@@ -222,5 +224,52 @@ export class OnDemandIndexer extends Construct {
                 timeout: Duration.hours(1),
             },
         );
+    }
+
+    /** Adds states to handle rate limit for a given Lambda invocation state. */
+    private addRateLimitRetry(task: sfntasks.LambdaInvoke) {
+        // extracts "Cause"
+        const extractRateLimitCause = new sfn.Pass(
+            this,
+            `ExtractRateLimitCause_${task.id}`,
+            {
+                comment: `Extracts Cause of a rate limit error of ${task.id}`,
+                parameters: {
+                    cause: sfn.JsonPath.stringAt('States.StringToJson($.rateLimitError.Cause)'),
+                },
+                resultPath: '$.rateLimitError',
+            },
+        );
+        // extracts "errorMessage"
+        const extractRateLimitMessage = new sfn.Pass(
+            this,
+            `ExtractRateLimitMessage_${task.id}`,
+            {
+                comment: `Extracts errorMessage of a rate limit error of ${task.id}`,
+                parameters: {
+                    message: sfn.JsonPath.stringAt('States.StringToJson($.rateLimitError.cause.errorMessage)'),
+                },
+                resultPath: '$.rateLimitError',
+            },
+        );
+        // waits until the rate limit reset
+        const waitRateLimitReset = new sfn.Wait(
+            this,
+            `WaitRateLimitReset_${task.id}`,
+            {
+                comment: `Waits until the rate limit reset to retry ${task.id}`,
+                time: sfn.WaitTime.timestampPath('$.rateLimitError.message.rateLimitReset'),
+            },
+        );
+
+        // chains states
+        extractRateLimitCause
+            .next(extractRateLimitMessage)
+            .next(waitRateLimitReset)
+            .next(task);
+        task.addCatch(extractRateLimitCause, {
+            errors: ['RateLimitError'],
+            resultPath: '$.rateLimitError',
+        });
     }
 }
