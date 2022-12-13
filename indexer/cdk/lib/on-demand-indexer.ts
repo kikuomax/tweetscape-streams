@@ -9,10 +9,13 @@ import {
 import { Construct } from 'constructs';
 import { PythonFunction } from '@aws-cdk/aws-lambda-python-alpha';
 
+import type { DeploymentStage } from './deployment-stage';
 import type { ExternalResources } from './external-resources';
 import type { IndexerDependencies } from './indexer-dependencies';
 
 interface Props {
+    /** Deployment stage. */
+    readonly deploymentStage: DeploymentStage;
     /** External resources. */
     readonly externalResources: ExternalResources;
     /** Dependencies of Indexer. */
@@ -49,6 +52,7 @@ export class OnDemandIndexer extends Construct {
     constructor(scope: Construct, id: string, props: Props) {
         super(scope, id);
 
+        const { deploymentStage } = props;
         const { databaseCredentials } = props.externalResources;
         const {
             commonPackages,
@@ -140,13 +144,17 @@ export class OnDemandIndexer extends Construct {
         );
         databaseCredentials.grantRead(this.indexFollowingLambda);
 
-        // creates the workflow to add a seed Twitter account to a stream
+        // workflows (state machines)
+        const idPrefix = deploymentStage === 'production' ? 'Prod' : 'Dev';
+        // - workflow to add a seed Twitter account to a stream
         this.addSeedAccountToStreamWorkflow =
-            this.createAddSeedAccountToStreamWorkflow();
+            this.createAddSeedAccountToStreamWorkflow(idPrefix);
     }
 
     /** Creates a workflow to add a seed Twitter account to a stream. */
-    private createAddSeedAccountToStreamWorkflow(): sfn.StateMachine {
+    private createAddSeedAccountToStreamWorkflow(
+        idPrefix: string,
+    ): sfn.StateMachine {
         // creates states
         // - invokes UpsertTwitterAccountLambda
         const invokeUpsertTwitterAccount = new sfntasks.LambdaInvoke(
@@ -215,7 +223,7 @@ export class OnDemandIndexer extends Construct {
         // chains states
         return new sfn.StateMachine(
             this,
-            'AddSeedAccountToStreamWorkflow',
+            `${idPrefix}AddSeedAccountToStreamWorkflow`,
             {
                 definition: invokeUpsertTwitterAccount
                     .next(invokeAddSeedAccountToStream)

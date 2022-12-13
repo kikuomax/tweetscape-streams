@@ -39,6 +39,7 @@ export class CdkStack extends cdk.Stack {
             },
         );
         const onDemandIndexer = new OnDemandIndexer(this, 'OnDemandIndexer', {
+            deploymentStage,
             externalResources,
             indexerDependencies,
         });
