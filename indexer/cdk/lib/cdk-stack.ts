@@ -3,6 +3,7 @@ import { Construct } from 'constructs';
 
 import type { DeploymentStage } from './deployment-stage';
 import { ExternalResources } from './external-resources';
+import { IndexerApi } from './indexer-api';
 import { IndexerDependencies } from './indexer-dependencies';
 import { OnDemandIndexer } from './on-demand-indexer';
 import { PeriodicIndexer } from './periodic-indexer';
@@ -42,6 +43,10 @@ export class CdkStack extends cdk.Stack {
             deploymentStage,
             externalResources,
             indexerDependencies,
+        });
+        const indexerApi = new IndexerApi(this, 'IndexerApi', {
+            deploymentStage,
+            onDemandIndexer,
         });
     }
 }
