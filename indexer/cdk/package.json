@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "aws-cdk-lib": "2.50.0",
+    "cdk-rest-api-with-spec": "github:codemonger-io/cdk-rest-api-with-spec#v0.2.1",
     "cdk2-python-library-layer": "github:kikuomax/cdk-python-library-layer#v0.2.0-v2",
     "constructs": "^10.0.0",
     "psycopg2-lambda-layer": "github:codemonger-io/psycopg2-lambda-layer#v0.1.0",
