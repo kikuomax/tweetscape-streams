@@ -8,10 +8,10 @@
   "paths": {
     "/": {},
     "/user": {},
-    "/user/{accountId}": {
+    "/user/{userId}": {
       "parameters": [
         {
-          "name": "accountId",
+          "name": "userId",
           "in": "path",
           "required": true,
           "schema": {
@@ -20,8 +20,8 @@
         }
       ]
     },
-    "/user/{accountId}/stream": {},
-    "/user/{accountId}/stream/{streamName}": {
+    "/user/{userId}/stream": {},
+    "/user/{userId}/stream/{streamName}": {
       "parameters": [
         {
           "name": "streamName",
@@ -33,13 +33,42 @@
         }
       ]
     },
-    "/user/{accountId}/stream/{streamName}/seed_account": {
+    "/user/{userId}/stream/{streamName}/seed_account": {
       "post": {
         "summary": "Adds a new seed account",
         "description": "Adds a given seed account to a specified stream",
+        "parameters": [
+          {
+            "description": "ID of a Trails user to make a request",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "123456789",
+            "name": "userId",
+            "in": "path"
+          },
+          {
+            "description": "Name of a stream to be edited",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "my_cool_stream",
+            "name": "streamName",
+            "in": "path"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "succeeded to add a seed account"
+            "description": "succeeded to add a seed account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexerApiTaskExecution9603F0CC"
+                }
+              }
+            }
           }
         }
       }
@@ -59,16 +88,80 @@
       "get": {
         "summary": "Returns the status of a task",
         "description": "Returns the status of a task",
+        "parameters": [
+          {
+            "description": "URL-encoded ID of a task to be checked",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "example": "arn%3Aaws%3Astates%3Aus-east-1%3A0123456789XY%3Aexecution%3AStateMachineID%3A9703b100-5ca1-4354-b184-10061c4082a5",
+            "name": "taskId",
+            "in": "path"
+          }
+        ],
         "responses": {
           "200": {
-            "description": "succeeded to obtain the task status"
+            "description": "succeeded to obtain the task status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexerApiTaskStatusBAB47592"
+                }
+              }
+            }
           }
         }
       }
     }
   },
   "components": {
-    "schemas": {},
+    "schemas": {
+      "IndexerApiTaskExecution9603F0CC": {
+        "description": "Task execution result",
+        "properties": {
+          "executionArn": {
+            "description": "ARN of the workflow execution (task ID)",
+            "example": "arn:aws:states:us-east-1:0123456789XY:execution:StateMachineID:9703b100-5ca1-4354-b184-10061c4082a5",
+            "type": "string"
+          },
+          "startDate": {
+            "description": "Start time of the execution",
+            "example": "2022-12-15T13:23:00+00:00",
+            "type": "string"
+          }
+        },
+        "title": "taskExecution",
+        "type": "object"
+      },
+      "IndexerApiTaskStatusBAB47592": {
+        "description": "Task status",
+        "properties": {
+          "status": {
+            "description": "Status of the task",
+            "enum": [
+              "RUNNING",
+              "SUCCEEDED",
+              "FAILED",
+              "TIMED_OUT",
+              "ABORTED"
+            ],
+            "example": "SUCCEEDED",
+            "type": "string"
+          },
+          "error": {
+            "description": "Error type",
+            "type": "string"
+          },
+          "cause": {
+            "description": "Cause of the error",
+            "type": "string"
+          }
+        },
+        "title": "taskStatus",
+        "type": "object"
+      }
+    },
     "securitySchemes": {}
   }
 }
