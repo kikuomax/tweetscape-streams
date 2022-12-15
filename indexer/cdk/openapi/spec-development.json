@@ -1,0 +1,74 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "IndexerApi",
+    "description": "API to interact with Indexer (development)",
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/": {},
+    "/user": {},
+    "/user/{accountId}": {
+      "parameters": [
+        {
+          "name": "accountId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/user/{accountId}/stream": {},
+    "/user/{accountId}/stream/{streamName}": {
+      "parameters": [
+        {
+          "name": "streamName",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/user/{accountId}/stream/{streamName}/seed_account": {
+      "post": {
+        "summary": "Adds a new seed account",
+        "description": "Adds a given seed account to a specified stream",
+        "responses": {
+          "200": {
+            "description": "succeeded to add a seed account"
+          }
+        }
+      }
+    },
+    "/task": {},
+    "/task/{taskId}": {
+      "parameters": [
+        {
+          "name": "taskId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Returns the status of a task",
+        "description": "Returns the status of a task",
+        "responses": {
+          "200": {
+            "description": "succeeded to obtain the task status"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {},
+    "securitySchemes": {}
+  }
+}
