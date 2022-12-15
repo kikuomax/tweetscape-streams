@@ -98,15 +98,73 @@ export class IndexerApi extends Construct {
             retainDeployments: true,
         });
 
+        // models
+        // - task execution
+        const taskExecutionModel = this.api.addModel('TaskExecution', {
+            description: 'Task execution result',
+            contentType: 'application/json',
+            schema: {
+                schema: apigateway.JsonSchemaVersion.DRAFT4,
+                title: 'taskExecution',
+                description: 'Task execution result',
+                type: apigateway.JsonSchemaType.OBJECT,
+                properties: {
+                    executionArn: {
+                        description: 'ARN of the workflow execution (task ID)',
+                        type: apigateway.JsonSchemaType.STRING,
+                        example: 'arn:aws:states:us-east-1:0123456789XY:execution:StateMachineID:9703b100-5ca1-4354-b184-10061c4082a5',
+                    },
+                    startDate: {
+                        description: 'Start time of the execution',
+                        type: apigateway.JsonSchemaType.STRING,
+                        example: '2022-12-15T13:23:00+00:00',
+                    },
+                },
+            },
+        });
+        // - task status
+        const taskStatusModel = this.api.addModel('TaskStatus', {
+            description: 'Task status',
+            contentType: 'application/json',
+            schema: {
+                schema: apigateway.JsonSchemaVersion.DRAFT4,
+                title: 'taskStatus',
+                description: 'Task status',
+                type: apigateway.JsonSchemaType.OBJECT,
+                properties: {
+                    status: {
+                        description: 'Status of the task',
+                        type: apigateway.JsonSchemaType.STRING,
+                        enum: [
+                            'RUNNING',
+                            'SUCCEEDED',
+                            'FAILED',
+                            'TIMED_OUT',
+                            'ABORTED',
+                        ],
+                        example: 'SUCCEEDED',
+                    },
+                    error: {
+                        description: 'Error type',
+                        type: apigateway.JsonSchemaType.STRING,
+                    },
+                    cause: {
+                        description: 'Cause of the error',
+                        type: apigateway.JsonSchemaType.STRING,
+                    },
+                },
+            },
+        });
+
         // /user
         const users = this.api.root.addResource('user');
-        // /user/{accountId}
-        const user = users.addResource('{accountId}');
-        // /user/{accountId}/stream
+        // /user/{userId}
+        const user = users.addResource('{userId}');
+        // /user/{userId}/stream
         const streams = user.addResource('stream');
-        // /user/{accountId}/stream/{streamName}
+        // /user/{userId}/stream/{streamName}
         const stream = streams.addResource('{streamName}');
-        // /user/{accountId}/stream/{streamName}/seed_account
+        // /user/{userId}/stream/{streamName}/seed_account
         const seed_accounts = stream.addResource('seed_account');
         // - POST: adds a seed account to a stream
         seed_accounts.addMethod(
@@ -118,7 +176,7 @@ export class IndexerApi extends Construct {
                     passthroughBehavior: apigateway.PassthroughBehavior.NEVER,
                     requestTemplates: {
                         'application/json': `{
-                          "requesterId": "$util.escapeJavaScript($input.params('accountId'))",
+                          "requesterId": "$util.escapeJavaScript($input.params('userId'))",
                           "streamName": "$util.escapeJavaScript($input.params('streamName'))",
                           "twitterUsername": $input.json('$.twitterUsername')
                         }`,
@@ -138,8 +196,25 @@ export class IndexerApi extends Construct {
                     {
                         statusCode: '200',
                         description: 'succeeded to add a seed account',
+                        responseModels: {
+                            'application/json': taskExecutionModel,
+                        },
                     },
                 ],
+                requestParameterSchemas: {
+                    'method.request.path.userId': {
+                        description: 'ID of a Trails user to make a request',
+                        required: true,
+                        schema: { type: 'string' },
+                        example: '123456789',
+                    },
+                    'method.request.path.streamName': {
+                        description: 'Name of a stream to be edited',
+                        required: true,
+                        schema: { type: 'string' },
+                        example: 'my_cool_stream',
+                    },
+                },
             },
         );
         // /task
@@ -171,8 +246,19 @@ export class IndexerApi extends Construct {
                     {
                         statusCode: '200',
                         description: 'succeeded to obtain the task status',
+                        responseModels: {
+                            'application/json': taskStatusModel,
+                        },
                     },
                 ],
+                requestParameterSchemas: {
+                    'method.request.path.taskId': {
+                        description: 'URL-encoded ID of a task to be checked',
+                        required: true,
+                        schema: { type: 'string' },
+                        example: 'arn%3Aaws%3Astates%3Aus-east-1%3A0123456789XY%3Aexecution%3AStateMachineID%3A9703b100-5ca1-4354-b184-10061c4082a5',
+                    },
+                },
             },
         );
     }
