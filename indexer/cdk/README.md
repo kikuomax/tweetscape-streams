@@ -78,6 +78,23 @@ For production:
 npx cdk deploy --toolkit-stack-name $TOOLKIT_STACK_NAME -c "@aws-cdk/core:bootstrapQualifier=$BOOTSTRAP_QUALIFIER" -c tweetscape:stage=production
 ```
 
+#### Assigning an IAM role for Amazon API Gateway logs
+
+When you deploy this CDK stack on a fresh AWS account, you will likely face an error with enabling CloudWatch logs for Amazon API Gateway (API Gateway).
+To enable CloudWatch logs for API Gateway, you have to
+1. Edit [`lib/indexer-api.ts`](./lib/indexer-api.ts) to turn off API Gateway logs
+2. Deploy this CDK stack
+3. Create\* an IAM role for API Gateway logs (on AWS console)
+4. Assign\* the created role to the CloudWatch logs role for API Gateway (on AWS console)
+5. Edit [`lib/indexer-api.ts`](./lib/indexer-api.ts) to turn on API Gateway logs
+6. Re-deploy this CDK stack
+
+\* Please refer to [this article](https://aws.amazon.com/premiumsupport/knowledge-center/api-gateway-cloudwatch-logs/) for how to create and assign a CloudWatch logs for API Gateway.
+
+Please note that the role for CloudWatch logs is an account-wide setting.
+I do not recommend to turn on the [`cloudWatchRole` option for `RestApi`](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_apigateway.RestApiProps.html#cloudwatchrole).
+If you do so, you will end up with subtle API Gateway errors in case you delete (undeploy) this CDK stack, and the role goes away.
+
 ### Configuring database credentials
 
 Connection parameters including passwords are stored in an [AWS SecretsManager](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html) secret.
