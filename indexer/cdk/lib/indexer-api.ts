@@ -56,6 +56,22 @@ export class IndexerApi extends Construct {
         addSeedAccountToStreamWorkflow.grantStartExecution(
             triggerAddSeedAccountToStreamLambda,
         );
+        // - obtains the status of a given task
+        const getTaskStatusLambda = new PythonFunction(
+            this,
+            'GetTaskStatusLambda',
+            {
+                description: 'Obtains the status of a given task',
+                architecture: lambda.Architecture.ARM_64,
+                runtime: lambda.Runtime.PYTHON_3_8,
+                entry: path.join('lambda', 'get-task-status'),
+                index: 'index.py',
+                handler: 'lambda_handler',
+                memorySize: 128,
+                timeout: Duration.seconds(30),
+            },
+        );
+        addSeedAccountToStreamWorkflow.grantRead(getTaskStatusLambda);
 
         this.api = new RestApiWithSpec(this, `IndexerApi`, {
             description: `API to interact with Indexer (${deploymentStage})`,
@@ -122,6 +138,39 @@ export class IndexerApi extends Construct {
                     {
                         statusCode: '200',
                         description: 'succeeded to add a seed account',
+                    },
+                ],
+            },
+        );
+        // /task
+        const tasks = this.api.root.addResource('task');
+        // /task/{taskId}
+        const task = tasks.addResource('{taskId}');
+        // - GET: obtains the status of a task
+        task.addMethod(
+            'GET',
+            new apigateway.LambdaIntegration(getTaskStatusLambda, {
+                proxy: false,
+                passthroughBehavior: apigateway.PassthroughBehavior.NEVER,
+                requestTemplates: {
+                    'application/json': `{
+                        "executionArn": "$util.escapeJavaScript($util.urlDecode($input.params('taskId')))"
+                    }`,
+                },
+                integrationResponses: [
+                    {
+                        statusCode: '200',
+                    },
+                ],
+            }),
+            {
+                operationName: 'getTaskStatus',
+                summary: 'Returns the status of a task',
+                description: 'Returns the status of a task',
+                methodResponses: [
+                    {
+                        statusCode: '200',
+                        description: 'succeeded to obtain the task status',
                     },
                 ],
             },
